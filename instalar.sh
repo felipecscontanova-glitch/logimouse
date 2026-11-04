@@ -25,7 +25,17 @@ ask() {
     read -r -p "$1 [S/n] " ans </dev/tty || true
     [[ -z "$ans" || "$ans" =~ ^[SsYy] ]]
 }
-stop_tray() { pkill -f -- "logimouse --tray" 2>/dev/null || true; }
+stop_tray() {
+    # fecha so a bandeja do LogiMouse: pelo PID gravado na trava e, se preciso,
+    # pelo comando exato (python... -m logimouse --tray)
+    local lock pid=""
+    lock="${XDG_RUNTIME_DIR:-/tmp}/logimouse-tray-$(id -u).lock"
+    [ -r "$lock" ] && pid="$(tr -dc '0-9' < "$lock")"
+    if [ -n "$pid" ] && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- "-m logimouse --tray"; then
+        kill "$pid" 2>/dev/null || true
+    fi
+    pkill -f -- '^[^ ]*python[^ ]* -m logimouse --tray' 2>/dev/null || true
+}
 
 remove() {
     stop_tray
