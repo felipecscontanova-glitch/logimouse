@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logimouse"
+dynamic = ["version"]
+description = "Bateria, DPI e roda de mouses Logitech no Linux (HID++ 2.0)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "felipecscontanova-glitch" }]
+keywords = ["logitech", "mouse", "hidpp", "dpi", "battery", "linux"]
+classifiers = [
+    "Environment :: X11 Applications",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: Portuguese (Brazilian)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+]
+# Sem dependencias do PyPI. O painel usa o Tkinter e o icone na barra usa o
+# PyGObject + AyatanaAppIndicator do sistema: instale-os pelo gerenciador de
+# pacotes (o instalar.sh faz isso).
+
+[project.urls]
+Homepage = "https://github.com/felipecscontanova-glitch/logimouse"
+
+[project.scripts]
+logimouse = "logimouse.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "logimouse.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

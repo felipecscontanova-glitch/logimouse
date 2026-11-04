@@ -1,0 +1,33 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Compilar
+        run: python -m compileall -q src tests
+      - name: Testes
+        run: python -m unittest discover -s tests -v
+      - name: Modo terminal com o mouse simulado
+        run: PYTHONPATH=src python -m logimouse --demo --cli
+
+  instalador:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Conferir o script
+        run: |
+          bash -n instalar.sh
+          shellcheck -S warning instalar.sh

@@ -1,0 +1,15 @@
+# LogiMouse: permite que o usuario logado converse com receptores e
+# dispositivos Logitech (HID++) sem precisar de sudo.
+ACTION == "remove", GOTO="logimouse_end"
+SUBSYSTEM != "hidraw", GOTO="logimouse_end"
+
+# Receptores e dispositivos Logitech via USB
+ATTRS{idVendor}=="046d", GOTO="logimouse_apply"
+# Dispositivos Logitech via Bluetooth
+KERNELS=="0005:046D:*", GOTO="logimouse_apply"
+GOTO="logimouse_end"
+
+LABEL="logimouse_apply"
+TAG+="uaccess"
+
+LABEL="logimouse_end"
