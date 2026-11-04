@@ -1,12 +1,14 @@
 """Painel (janela) em Tkinter."""
 
+import os
 import queue
 import subprocess
 import threading
 
-from . import APP_NAME
+from . import APP_NAME, __version__
 from . import config
 from . import hidpp as H
+from . import update as U
 
 
 def run_gui(demo=False):
@@ -458,6 +460,10 @@ class App:
         ttk.Checkbutton(c, text="Reaplicar meus ajustes quando o mouse reconectar",
                         variable=self.reapply_var, style="Card.TCheckbutton",
                         command=lambda: config.set_option("reapply", self.reapply_var.get())).pack(anchor="w", pady=(4, 0))
+        self.autoupd_var = tk.BooleanVar(value=bool(config.get_option("auto_update")))
+        ttk.Checkbutton(c, text="Atualizar automaticamente pelo GitHub",
+                        variable=self.autoupd_var, style="Card.TCheckbutton",
+                        command=lambda: config.set_option("auto_update", self.autoupd_var.get())).pack(anchor="w", pady=(4, 0))
         row = ttk.Frame(c, style="Card.TFrame")
         row.pack(fill="x", pady=(10, 0))
         self.tray_btn = ttk.Button(row, text="Mostrar ícone na barra agora", command=self._start_tray)
@@ -466,6 +472,11 @@ class App:
             ttk.Button(row, text="Esquecer ajustes", command=self._forget).pack(side="right")
         self.tray_hint = ttk.Label(c, text="", style="Muted.TLabel", wraplength=360, justify="left")
         self.tray_hint.pack(anchor="w", pady=(6, 0))
+        ttk.Separator(c).pack(fill="x", pady=10)
+        vrow = ttk.Frame(c, style="Card.TFrame")
+        vrow.pack(fill="x")
+        ttk.Label(vrow, text=f"Versão {__version__}", style="Card.TLabel").pack(side="left")
+        ttk.Button(vrow, text="Procurar atualização", command=self._check_update).pack(side="right")
         self._update_app_card()
 
     def _update_app_card(self):
@@ -498,6 +509,44 @@ class App:
         except OSError as e:
             self.say(f"Não deu para iniciar o ícone: {e}")
         self.root.after(1500, lambda: self.tray_btn.winfo_exists() and self._update_app_card())
+
+    def _check_update(self):
+        if self.demo:
+            self.say("No modo demonstração não há atualização.")
+            return
+        self.say("Procurando atualização no GitHub...")
+
+        def done(info):
+            if not info["tag"]:
+                self.say("Nenhuma versão publicada no GitHub ainda.")
+            elif not info["newer"]:
+                self.say(f"Você já está na versão mais nova ({info['current']}).")
+            elif not U.can_self_update():
+                self.say(f"A versão {info['latest']} está no GitHub ({U.why_not_self_update()}).")
+            else:
+                from tkinter import messagebox
+                if messagebox.askyesno("Atualização disponível",
+                                       f"A versão {info['latest']} do LogiMouse está disponível.\n"
+                                       f"Você está na {info['current']}. Instalar agora?", parent=self.root):
+                    self.say("Baixando e instalando...")
+                    self.worker.submit(lambda: U.install(info["tag"]), self._updated,
+                                       lambda e: self.say(f"A atualização falhou: {e}. Nada foi alterado."))
+                else:
+                    self.say("")
+        self.worker.submit(U.check, done, lambda e: self.say(f"Não deu para procurar atualização: {e}"))
+
+    def _updated(self, res):
+        from tkinter import messagebox
+        config.restart_tray()
+        msg = f"Pronto! Agora você está na versão {res['version']}. O painel vai reabrir."
+        if res["needs_installer"]:
+            msg += "\n\nEsta versão mudou a permissão de acesso ao mouse: rode o instalar.sh de novo."
+        messagebox.showinfo("LogiMouse atualizado", msg, parent=self.root)
+        cmd = config.launcher_command()
+        try:
+            self.root.destroy()
+        finally:
+            os.execvpe(cmd[0], cmd, config.launcher_env())
 
     def _forget(self):
         if self.dev is not None:

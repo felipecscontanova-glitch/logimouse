@@ -5,6 +5,7 @@ O Monitor roda numa thread propria e nao depende de GTK (da para testar sozinho)
 O TrayApp e so a parte visual (AppIndicator).
 """
 
+import os
 import queue
 import shutil
 import signal
@@ -14,9 +15,10 @@ import threading
 import time
 import traceback
 
-from . import APP_NAME
+from . import APP_NAME, __version__
 from . import config
 from . import hidpp as H
+from . import update as U
 
 
 def log(*args):
@@ -348,10 +350,17 @@ class TrayApp:
                                on_change=lambda s: GLib.idle_add(self.update, s),
                                on_low_battery=lambda n, p: GLib.idle_add(
                                    _notify, "Bateria do mouse baixa", f"{n}: {p}%. Hora de carregar."))
+        self.update_info = None
+        self._upd_lock = threading.Lock()
+        self._upd_stop = threading.Event()
         self.update([])
         threading.Thread(target=self.monitor.run, daemon=True).start()
+        if not demo:
+            threading.Thread(target=self._update_loop, daemon=True).start()
         for s in (signal.SIGINT, signal.SIGTERM):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, s, self.quit)
+        # SIGHUP: o painel instalou uma versao nova, reabre com ela
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self.restart)
 
     def _primary(self):
         online = [d for d in self.snap if d["online"] and d["battery"]]
@@ -368,7 +377,8 @@ class TrayApp:
         self.ind.set_label(label, "100% ⚡")
         sig = repr([(d["name"], d["online"], d["battery"], d["last_apply"] and d["last_apply"]["at"])
                     for d in snap]) + repr((config.autostart_enabled(), config.get_option("reapply"),
-                                            config.get_option("notify_low")))
+                                            config.get_option("notify_low"), config.get_option("auto_update"),
+                                            self.update_info and self.update_info["tag"]))
         if sig != self._sig:
             self._sig = sig
             self.build_menu()
@@ -414,6 +424,14 @@ class TrayApp:
               lambda v: (config.set_option("reapply", v), self.refresh()))
         check("Avisar com bateria baixa", bool(config.get_option("notify_low")),
               lambda v: (config.set_option("notify_low", v), self.refresh()))
+        check("Atualizar automaticamente", bool(config.get_option("auto_update")),
+              lambda v: (config.set_option("auto_update", v), self.refresh()))
+        menu.append(Gtk.SeparatorMenuItem())
+        item(f"Versão {__version__}")
+        if self.update_info:
+            item(f"Instalar a versão {self.update_info['latest']}", self.check_now)
+        if not self.demo:
+            item("Procurar atualização agora", self.check_now)
         if self.demo:
             menu.append(Gtk.SeparatorMenuItem())
             item("[demo] desligar e ligar o mouse", self.demo_cycle)
@@ -444,8 +462,76 @@ class TrayApp:
         self.fake.power_off()
         self.GLib.timeout_add(1500, lambda: (self.fake.power_on(), False)[1])
 
+    # ---- atualizacao automatica ----
+    FIRST_CHECK = 120  # s depois de abrir (a internet pode ainda nao estar pronta no login)
+
+    def _update_loop(self):
+        last = float(config.get_option("last_update_check") or 0)
+        wait = max(self.FIRST_CHECK, last + U.CHECK_EVERY - time.time())
+        while not self._upd_stop.wait(wait):
+            if config.get_option("auto_update"):
+                self._check_update(manual=False)
+            wait = U.CHECK_EVERY
+
+    def check_now(self):
+        threading.Thread(target=self._check_update, kwargs=dict(manual=True), daemon=True).start()
+
+    def _check_update(self, manual):
+        if not self._upd_lock.acquire(blocking=False):
+            return
+        try:
+            config.set_option("last_update_check", time.time())
+            try:
+                info = U.check()
+            except U.UpdateError as e:
+                log("atualização:", e)
+                if manual:
+                    _notify("Não deu para procurar atualização", str(e))
+                return
+            self.update_info = info if info["newer"] else None
+            self.GLib.idle_add(self.refresh)
+            if not info["newer"]:
+                if manual:
+                    _notify("LogiMouse está atualizado", f"A versão {info['current']} é a mais nova.")
+                return
+            log(f"versão nova no GitHub: {info['latest']}")
+            if not U.can_self_update():
+                if manual:
+                    _notify(f"LogiMouse {info['latest']} disponível", U.why_not_self_update())
+                return
+            self._install(info["tag"])
+        finally:
+            self._upd_lock.release()
+
+    def _install(self, tag):
+        try:
+            res = U.install(tag)
+        except (U.UpdateError, OSError) as e:
+            log("atualização falhou:", e)
+            _notify("A atualização do LogiMouse falhou", f"{e}. Continua na versão {__version__}.")
+            return
+        msg = f"Atualizado da versão {__version__} para a {res['version']}."
+        if res["needs_installer"]:
+            msg += " Rode o instalar.sh de novo para atualizar a permissão de acesso ao mouse."
+        log(msg)
+        _notify("LogiMouse atualizado", msg)
+        self.GLib.idle_add(self.restart)
+
+    def restart(self):
+        """Reabre a bandeja com a versao nova (mesmo processo, codigo novo)."""
+        self.monitor.stop()
+        self._upd_stop.set()
+        cmd = config.launcher_command("--tray")
+        try:
+            os.execvpe(cmd[0], cmd, config.launcher_env())
+        except OSError as e:
+            log("não deu para reiniciar:", e)
+            _notify("LogiMouse atualizado", "Feche e abra o ícone para usar a versão nova.")
+        return False
+
     def quit(self, *_):
         self.monitor.stop()
+        self._upd_stop.set()
         self.Gtk.main_quit()
         return False
 

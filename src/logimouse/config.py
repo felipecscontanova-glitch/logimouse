@@ -34,7 +34,7 @@ def runtime_dir():
 DRY_RUN = False
 _memory = None
 
-DEFAULTS = {"reapply": True, "notify_low": True, "devices": {}}
+DEFAULTS = {"reapply": True, "notify_low": True, "auto_update": True, "last_update_check": 0, "devices": {}}
 
 
 def load():
@@ -175,7 +175,35 @@ def acquire_tray_lock():
     except OSError:
         fh.close()
         return None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(str(os.getpid()))
+    fh.flush()
     return fh
+
+
+def tray_pid():
+    """PID da bandeja rodando, ou None."""
+    if not tray_running():
+        return None
+    try:
+        with open(_lock_path()) as fh:
+            return int(fh.read().strip() or 0) or None
+    except (OSError, ValueError):
+        return None
+
+
+def restart_tray():
+    """Pede para a bandeja reabrir (usado depois de uma atualizacao feita pelo painel)."""
+    import signal
+    pid = tray_pid()
+    if pid:
+        try:
+            os.kill(pid, signal.SIGHUP)
+            return True
+        except OSError:
+            pass
+    return False
 
 
 def tray_running():

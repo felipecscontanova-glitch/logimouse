@@ -128,6 +128,8 @@ mkdir -p "$PREFIX" "$(dirname "$BIN")"
 rm -rf "$PREFIX/logimouse"
 cp -r "$DIR/src/logimouse" "$PREFIX/"
 find "$PREFIX" -name '__pycache__' -type d -prune -exec rm -rf {} +
+# marca que esta copia foi instalada aqui e pode se atualizar sozinha pelo GitHub
+printf 'instalado pelo instalar.sh em %s\n' "$(date -Iseconds)" > "$PREFIX/.instalado"
 rm -f "$BIN"
 cat > "$BIN" <<EOF
 #!/bin/sh

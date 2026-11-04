@@ -14,6 +14,9 @@ def main(argv=None):
     ap.add_argument("--dpi", type=int, metavar="N", help="mudar o DPI pelo terminal")
     ap.add_argument("--reapply", action="store_true", help="reaplicar os ajustes salvos agora")
     ap.add_argument("--autostart", choices=["on", "off"], help="ligar/desligar o início com o sistema")
+    ap.add_argument("--update", action="store_true", help="procurar e instalar a versão mais nova do GitHub")
+    ap.add_argument("--check-update", action="store_true", help="só ver se há versão nova no GitHub")
+    ap.add_argument("--rollback", action="store_true", help="voltar para a versão anterior à última atualização")
     ap.add_argument("--demo", action="store_true", help="usar um mouse simulado (não mexe nos seus ajustes)")
     ap.add_argument("--version", action="version", version=f"{APP_NAME} {__version__}")
     a = ap.parse_args(argv)
@@ -23,6 +26,9 @@ def main(argv=None):
         on = config.set_autostart(a.autostart == "on")
         print("Início com o sistema:", "ligado" if on else "desligado")
         return 0
+    if a.update or a.check_update or a.rollback:
+        from .cli import run_update
+        return run_update(install=a.update, rollback=a.rollback)
     if a.tray:
         from .tray import run_tray
         return run_tray(demo=a.demo)

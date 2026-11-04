@@ -30,6 +30,7 @@ Cada parte só aparece se o seu mouse tiver o recurso.
 | **Ícone na barra** | % da bateria, aviso de bateria baixa, atalho para o painel |
 | **Reaplicar ajustes** | ao ligar o PC, ao religar o mouse, ao recolocar o receptor ou reconectar o Bluetooth |
 | **Iniciar com o sistema** | liga/desliga pelo painel ou pelo menu do ícone |
+| **Atualização automática** | procura versão nova aqui no GitHub uma vez por dia e instala sozinho |
 
 Funciona com receptor **Unifying**, **Bolt** e **Lightspeed**, por **Bluetooth** ou pelo **cabo USB**.
 
@@ -50,7 +51,7 @@ O instalador:
 5. pergunta se você quer **iniciar junto com o sistema** e já liga o ícone na barra.
 
 Ele pede sua senha (para os pacotes e a regra udev). Use `./instalar.sh -y` para aceitar tudo sem perguntas.
-Para **atualizar**, rode `git pull` e `./instalar.sh` de novo; seus ajustes são mantidos.
+Depois disso o LogiMouse **se atualiza sozinho** (veja abaixo); seus ajustes são mantidos.
 
 > Se o app disser "sem permissão", tire e recoloque o receptor (ou desligue e ligue o mouse) para a
 > regra nova valer.
@@ -84,6 +85,24 @@ próprio mouse ou pela volta do dispositivo Bluetooth) e reenvia o que você esc
 Só são reaplicados os ajustes que **você mudou** no painel. Para voltar ao comportamento de fábrica de um
 mouse, use **Esquecer ajustes** no painel.
 
+### Atualização automática
+
+Com o ícone na barra rodando, o LogiMouse procura uma versão nova neste repositório **uma vez por dia**
+(a primeira 2 minutos depois de ligar o PC). Se houver, ele:
+
+1. baixa a versão do GitHub;
+2. confere se ela está inteira, é a versão certa e abre sem erro, e só então troca o programa;
+3. guarda a versão anterior e reabre o ícone já na nova, avisando com uma notificação.
+
+Não pede senha, porque o programa fica na sua pasta pessoal. Se a versão nova mudar a permissão de
+acesso ao mouse (regra udev), a notificação pede para rodar o `instalar.sh` de novo.
+
+Para desligar, desmarque **Atualizar automaticamente** no painel ou no menu do ícone. Também dá para
+procurar na hora pelo botão **Procurar atualização** ou por `logimouse --update`. Se uma versão nova
+der problema, `logimouse --rollback` volta para a anterior.
+
+> Rodando direto de um `git clone` (sem o instalador), o app só avisa da versão nova: use `git pull`.
+
 ### Terminal
 
 ```bash
@@ -93,6 +112,9 @@ logimouse --cli           # mostra tudo no terminal
 logimouse --dpi 1600      # muda o DPI (e salva)
 logimouse --reapply       # reaplica os ajustes salvos agora
 logimouse --autostart on  # liga o início com o sistema (off para desligar)
+logimouse --check-update  # vê se há versão nova no GitHub
+logimouse --update        # instala a versão nova agora
+logimouse --rollback      # volta para a versão anterior
 logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajustes
 ```
 
@@ -102,7 +124,7 @@ logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajus
 |---|---|
 | `~/.config/logimouse/config.json` | ajustes salvos de cada mouse e opções |
 | `~/.config/autostart/logimouse.desktop` | início com o sistema |
-| `~/.local/share/logimouse/` | o programa |
+| `~/.local/share/logimouse/` | o programa (e `logimouse.anterior/`, a versão antes da última atualização) |
 | `~/.local/bin/logimouse` | o comando |
 | `/etc/udev/rules.d/42-logimouse.rules` | permissão de acesso ao mouse |
 
@@ -137,6 +159,7 @@ src/logimouse/
   gui.py       painel (Tkinter)
   tray.py      ícone na barra (AppIndicator) e monitor de reconexão
   config.py    ajustes salvos, início com o sistema, trava de instância única
+  update.py    atualização automática pelas tags do GitHub
   cli.py       modo terminal
   demo.py      mouse simulado para testes e --demo
 tests/         testes automáticos (rodam sem mouse)
@@ -157,7 +180,18 @@ python3 -m unittest discover -s tests -v
 ```
 
 Os testes usam um mouse simulado que responde como um de verdade, inclusive "esquecendo" os ajustes
-ao ser desligado, para conferir que o monitor reaplica tudo na reconexão.
+ao ser desligado, para conferir que o monitor reaplica tudo na reconexão. O atualizador é testado com
+pacotes falsos: certo, corrompido, com erro de código, com versão trocada e tentando gravar fora da pasta.
+
+### Publicar uma versão nova
+
+O atualizador procura **tags** no formato `vX.Y.Z`:
+
+1. mude `__version__` em `src/logimouse/__init__.py` e anote no `CHANGELOG.md`;
+2. faça o commit e envie (`git push`);
+3. crie e envie a tag: `git tag v1.3.0 && git push origin v1.3.0`.
+
+No dia seguinte (ou na hora, pelo botão), todo mundo com o ícone rodando recebe a versão nova.
 
 ## Créditos
 

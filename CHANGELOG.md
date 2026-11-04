@@ -1,5 +1,15 @@
 # Histórico de versões
 
+## 1.2.0 (2026-11-04)
+
+- Atualização automática pelo GitHub: o ícone na barra procura versão nova uma vez por dia,
+  instala sozinho (sem pedir senha) e reabre já na versão nova.
+- A versão nova é conferida antes de entrar no lugar (versão certa, tudo compila e abre) e a
+  anterior fica guardada; `logimouse --rollback` volta para ela.
+- Painel: versão atual, botão "Procurar atualização" e opção "Atualizar automaticamente".
+- Menu do ícone: versão, "Procurar atualização agora" e "Atualizar automaticamente".
+- Novos comandos: `--update`, `--check-update`, `--rollback`.
+
 ## 1.1.0 (2026-11-04)
 
 - Ícone na barra com a % da bateria e aviso de bateria baixa.

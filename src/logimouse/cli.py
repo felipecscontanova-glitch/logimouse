@@ -1,7 +1,9 @@
 """Modo terminal."""
 
+from . import __version__
 from . import config
 from . import hidpp as H
+from . import update as U
 
 
 def run_cli(dpi=None, demo=False):
@@ -47,6 +49,34 @@ def run_cli(dpi=None, demo=False):
         saved = config.device_settings(d.name)
         if saved:
             print("  Ajustes salvos:", ", ".join(f"{k}={v}" for k, v in sorted(saved.items())))
+    return 0
+
+
+def run_update(install=False, rollback=False):
+    try:
+        if rollback:
+            U.rollback()
+            config.restart_tray()
+            print("Voltou para a versão anterior.")
+            return 0
+        if install:
+            msg, res = U.check_and_install()
+            print(msg)
+            if res:
+                config.restart_tray()
+            return 0
+        info = U.check()
+    except U.UpdateError as e:
+        print("Não deu:", e)
+        return 1
+    if not info["tag"]:
+        print("Nenhuma versão publicada no GitHub ainda.")
+    elif info["newer"]:
+        print(f"Versão nova disponível: {info['latest']} (você está na {__version__}).")
+        print("Instale com: logimouse --update" if U.can_self_update()
+              else f"({U.why_not_self_update()})")
+    else:
+        print(f"Você já está na versão mais nova ({__version__}).")
     return 0
 
 
