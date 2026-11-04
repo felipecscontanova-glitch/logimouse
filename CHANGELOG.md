@@ -2,7 +2,7 @@
 
 ## 1.2.0 (2026-11-04)
 
-- Atualização automática pelo GitHub: o ícone na barra procura versão nova uma vez por dia,
+- Atualização automática pelo GitHub (versão da branch main ou tags vX.Y.Z): o ícone na barra procura versão nova uma vez por dia,
   instala sozinho (sem pedir senha) e reabre já na versão nova.
 - A versão nova é conferida antes de entrar no lugar (versão certa, tudo compila e abre) e a
   anterior fica guardada; `logimouse --rollback` volta para ela.

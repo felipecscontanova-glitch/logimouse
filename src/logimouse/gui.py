@@ -517,7 +517,7 @@ class App:
         self.say("Procurando atualização no GitHub...")
 
         def done(info):
-            if not info["tag"]:
+            if not info["latest"]:
                 self.say("Nenhuma versão publicada no GitHub ainda.")
             elif not info["newer"]:
                 self.say(f"Você já está na versão mais nova ({info['current']}).")
@@ -529,7 +529,7 @@ class App:
                                        f"A versão {info['latest']} do LogiMouse está disponível.\n"
                                        f"Você está na {info['current']}. Instalar agora?", parent=self.root):
                     self.say("Baixando e instalando...")
-                    self.worker.submit(lambda: U.install(info["tag"]), self._updated,
+                    self.worker.submit(lambda: U.install(info["ref"], info["latest"]), self._updated,
                                        lambda e: self.say(f"A atualização falhou: {e}. Nada foi alterado."))
                 else:
                     self.say("")

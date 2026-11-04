@@ -378,7 +378,7 @@ class TrayApp:
         sig = repr([(d["name"], d["online"], d["battery"], d["last_apply"] and d["last_apply"]["at"])
                     for d in snap]) + repr((config.autostart_enabled(), config.get_option("reapply"),
                                             config.get_option("notify_low"), config.get_option("auto_update"),
-                                            self.update_info and self.update_info["tag"]))
+                                            self.update_info and self.update_info["latest"]))
         if sig != self._sig:
             self._sig = sig
             self.build_menu()
@@ -499,13 +499,13 @@ class TrayApp:
                 if manual:
                     _notify(f"LogiMouse {info['latest']} disponível", U.why_not_self_update())
                 return
-            self._install(info["tag"])
+            self._install(info["ref"], info["latest"])
         finally:
             self._upd_lock.release()
 
-    def _install(self, tag):
+    def _install(self, ref, version):
         try:
-            res = U.install(tag)
+            res = U.install(ref, version)
         except (U.UpdateError, OSError) as e:
             log("atualização falhou:", e)
             _notify("A atualização do LogiMouse falhou", f"{e}. Continua na versão {__version__}.")

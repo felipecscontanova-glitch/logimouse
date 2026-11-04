@@ -69,7 +69,7 @@ def run_update(install=False, rollback=False):
     except U.UpdateError as e:
         print("Não deu:", e)
         return 1
-    if not info["tag"]:
+    if not info["latest"]:
         print("Nenhuma versão publicada no GitHub ainda.")
     elif info["newer"]:
         print(f"Versão nova disponível: {info['latest']} (você está na {__version__}).")

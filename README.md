@@ -185,13 +185,17 @@ pacotes falsos: certo, corrompido, com erro de código, com versão trocada e te
 
 ### Publicar uma versão nova
 
-O atualizador procura **tags** no formato `vX.Y.Z`:
+O atualizador compara a versão instalada com a versão escrita em `src/logimouse/__init__.py`
+na branch `main` (e com as tags `vX.Y.Z`, se houver; vale a mais alta). Então, para lançar:
 
-1. mude `__version__` em `src/logimouse/__init__.py` e anote no `CHANGELOG.md`;
-2. faça o commit e envie (`git push`);
-3. crie e envie a tag: `git tag v1.3.0 && git push origin v1.3.0`.
+1. mude `__version__` em `src/logimouse/__init__.py` (por exemplo, para `1.3.0`) e anote no `CHANGELOG.md`;
+2. faça o commit e envie para a `main` (`git push`).
 
-No dia seguinte (ou na hora, pelo botão), todo mundo com o ícone rodando recebe a versão nova.
+Commits que não aumentam o número da versão **não** são enviados para ninguém, então dá para
+trabalhar na `main` à vontade e só "lançar" quando mudar a versão. Se preferir, crie também uma
+Release `v1.3.0` pelo site do GitHub para ter a página da versão.
+
+No dia seguinte (ou na hora, pelo botão), quem tem o ícone rodando recebe a versão nova.
 
 ## Créditos
 

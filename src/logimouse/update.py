@@ -1,10 +1,13 @@
 """
-Atualizacao automatica a partir das versoes publicadas no GitHub.
+Atualizacao automatica a partir do GitHub.
 
-Uma versao e uma tag no formato vX.Y.Z. O atualizador baixa o .tar.gz da
-tag, confere (versao certa, tudo compila e importa) e troca a pasta do
-programa em ~/.local/share/logimouse, guardando a anterior para voltar se
-algo der errado. Nao precisa de senha.
+Uma versao nova e publicada de dois jeitos (vale a mais alta):
+  - aumentando __version__ em src/logimouse/__init__.py na branch main;
+  - criando uma tag vX.Y.Z (por exemplo, numa Release pelo site do GitHub).
+
+O atualizador baixa o .tar.gz dessa versao, confere (versao certa, tudo
+compila e importa) e troca a pasta do programa em ~/.local/share/logimouse,
+guardando a anterior para voltar se algo der errado. Nao precisa de senha.
 """
 
 import compileall
@@ -24,8 +27,10 @@ from . import __version__
 from . import config
 
 REPO = "felipecscontanova-glitch/logimouse"
+BRANCH = "main"
 TAGS_URL = "https://api.github.com/repos/{repo}/tags?per_page=100"
-TARBALL_URL = "https://codeload.github.com/{repo}/tar.gz/refs/tags/{tag}"
+VERSION_URL = "https://raw.githubusercontent.com/{repo}/{branch}/src/logimouse/__init__.py"
+TARBALL_URL = "https://codeload.github.com/{repo}/tar.gz/{ref}"
 PAGE_URL = "https://github.com/{repo}"
 MAX_DOWNLOAD = 20 * 1024 * 1024
 MARKER = ".instalado"
@@ -76,8 +81,7 @@ def _get(url, timeout=20):
     return data
 
 
-def latest():
-    """Devolve a tag mais nova publicada (ex.: 'v1.2.0') ou None."""
+def _from_tags():
     try:
         tags = json.loads(_get(TAGS_URL.format(repo=repo())).decode("utf-8"))
     except ValueError as e:
@@ -88,14 +92,40 @@ def latest():
         v = parse_version(name)
         if v and (best is None or v > best[0]):
             best = (v, name)
-    return best[1] if best else None
+    return (best[0], "refs/tags/" + best[1]) if best else None
+
+
+def _from_branch():
+    text = _get(VERSION_URL.format(repo=repo(), branch=BRANCH)).decode("utf-8", "replace")
+    m = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.M)
+    v = parse_version(m.group(1)) if m else None
+    return (v, "refs/heads/" + BRANCH) if v else None
+
+
+def latest():
+    """Devolve (versao, ref) da versao mais nova publicada, ou None."""
+    found, errors = [], []
+    for source in (_from_branch, _from_tags):
+        try:
+            r = source()
+        except UpdateError as e:
+            errors.append(e)
+            continue
+        if r:
+            found.append(r)
+    if not found:
+        if errors and len(errors) == 2:
+            raise errors[0]
+        return None
+    v, ref = max(found, key=lambda x: x[0])
+    return ".".join(map(str, v)), ref
 
 
 def check():
-    """Devolve dict(current, latest, tag, newer)."""
-    tag = latest()
-    return dict(current=__version__, latest=tag.lstrip("v") if tag else None,
-                tag=tag, newer=bool(tag and is_newer(tag)))
+    """Devolve dict(current, latest, ref, newer)."""
+    r = latest()
+    ver, ref = r if r else (None, None)
+    return dict(current=__version__, latest=ver, ref=ref, newer=bool(ver and is_newer(ver)))
 
 
 # --------------------------------------------------------------------------
@@ -173,15 +203,18 @@ def _verify(staging_parent, expected):
         raise UpdateError(f"versão inesperada no pacote ({out.stdout.strip()} em vez de {expected})")
 
 
-def install(tag, data=None):
-    """Baixa e instala a tag. Devolve dict(version, needs_installer)."""
+def install(ref, version, data=None):
+    """Baixa e instala a versao (ref = refs/heads/main ou refs/tags/vX.Y.Z).
+    Devolve dict(version, needs_installer)."""
     if not can_self_update():
         raise UpdateError(why_not_self_update())
-    expected = tag.lstrip("v")
+    expected = (version or "").lstrip("v")
     if parse_version(expected) is None:
-        raise UpdateError(f"versão inválida: {tag}")
+        raise UpdateError(f"versão inválida: {version}")
+    if not re.fullmatch(r"refs/(heads|tags)/[A-Za-z0-9._/-]+", ref or ""):
+        raise UpdateError(f"referência inválida: {ref}")
     if data is None:
-        data = _get(TARBALL_URL.format(repo=repo(), tag=tag), timeout=60)
+        data = _get(TARBALL_URL.format(repo=repo(), ref=ref), timeout=60)
 
     prefix = prefix_dir()
     target = os.path.join(prefix, "logimouse")
@@ -244,11 +277,11 @@ def rollback():
 def check_and_install():
     """Para o terminal e para a bandeja: devolve (mensagem, resultado_ou_None)."""
     info = check()
-    if not info["tag"]:
+    if not info["latest"]:
         return "Nenhuma versão publicada no GitHub ainda.", None
     if not info["newer"]:
         return f"Você já está na versão mais nova ({info['current']}).", None
-    res = install(info["tag"])
+    res = install(info["ref"], info["latest"])
     msg = f"Atualizado de {info['current']} para {res['version']}."
     if res["needs_installer"]:
         msg += " Esta versão mudou a permissão de acesso ao mouse: rode o instalar.sh de novo."
