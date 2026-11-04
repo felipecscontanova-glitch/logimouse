@@ -1,5 +1,16 @@
 # Histórico de versões
 
+## 1.2.1 (2026-11-04)
+
+- Corrige: às vezes o painel aplicava o DPI (ou outro ajuste) no mouse, mas não salvava. Um erro
+  em qualquer parte do painel interrompia o processamento das respostas seguintes, e o ícone
+  depois reaplicava o valor antigo ao reconectar.
+- O painel agora salva o valor que você **escolheu**, não o que o mouse respondeu. Se o mouse
+  ficar com outro valor, aparece um aviso (em mouses G, a dica é ligar o modo host).
+- Se o mouse estiver dormindo ou desligado na hora, a escolha é salva e aplicada quando ele reconectar.
+- Painel e ícone não podem mais sobrescrever o `config.json` um do outro (trava de arquivo).
+- Testes do painel que reproduzem o problema (rodam no CI com tela virtual).
+
 ## 1.2.0 (2026-11-04)
 
 - Atualização automática pelo GitHub (versão da branch main ou tags vX.Y.Z): o ícone na barra procura versão nova uma vez por dia,

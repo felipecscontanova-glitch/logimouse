@@ -24,6 +24,7 @@ class FakeMouse:
         self.out = []
         self._r, self._w = os.pipe()
         self.online = True
+        self.ignore_dpi = False  # simula mouse G em modo de perfis da memoria
         self.soc = 73
         self.charging = 0
         self.reset()
@@ -111,7 +112,8 @@ class FakeMouse:
             if fn == 2:
                 return [0, self.dpi >> 8, self.dpi & 0xFF, 1000 >> 8, 1000 & 0xFF]
             if fn == 3:
-                self.dpi = (p[1] << 8) | p[2]
+                if not self.ignore_dpi:
+                    self.dpi = (p[1] << 8) | p[2]
                 return [0, p[1], p[2]]
         if fid == H.F_SMART_SHIFT:
             if fn == 0:

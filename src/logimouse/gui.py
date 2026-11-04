@@ -4,6 +4,7 @@ import os
 import queue
 import subprocess
 import threading
+import traceback
 
 from . import APP_NAME, __version__
 from . import config
@@ -51,14 +52,21 @@ class Worker:
                 self.done.put((err, None, e))
 
     def _poll(self):
+        # Um erro num callback nao pode parar os outros: antes, uma excecao aqui
+        # interrompia o ciclo e as respostas seguintes (inclusive "salvar") se perdiam.
         try:
             while True:
-                cb, res, exc = self.done.get_nowait()
+                try:
+                    cb, res, exc = self.done.get_nowait()
+                except queue.Empty:
+                    break
                 if cb:
-                    cb(exc if exc is not None else res)
-        except queue.Empty:
-            pass
-        self.root.after(40, self._poll)
+                    try:
+                        cb(exc if exc is not None else res)
+                    except Exception:  # noqa: BLE001
+                        traceback.print_exc()
+        finally:
+            self.root.after(40, self._poll)
 
 
 class App:
@@ -309,10 +317,13 @@ class App:
             sc = ttk.Scale(c, from_=0x2E, to=0x1FF, variable=self.spd_var,
                            command=lambda v: self.spd_label.configure(text=self._spd_text(float(v))))
             sc.pack(fill="x", pady=(6, 0))
-            sc.bind("<ButtonRelease-1>", lambda e: self._apply(
-                lambda: self.dev.set_pointer_speed(self.spd_var.get()),
-                lambda v: (self.spd_var.set(v), self.spd_label.configure(text=self._spd_text(v))),
-                "Velocidade do ponteiro", lambda v: {"pointer_speed": v}))
+            sc.bind("<ButtonRelease-1>", lambda e: self._speed_apply())
+
+    def _speed_apply(self):
+        v = max(0x2E, min(0x1FF, int(round(self.spd_var.get()))))
+        self._apply(lambda: self.dev.set_pointer_speed(v),
+                    lambda r: (self.spd_var.set(r), self.spd_label.configure(text=self._spd_text(r))),
+                    "Velocidade do ponteiro", {"pointer_speed": v}, expect=v)
 
     @staticmethod
     def _spd_text(v):
@@ -329,7 +340,8 @@ class App:
             if v in self.dpi_choices:
                 self.dpi_var.set(self.dpi_choices.index(v))
             self.dpi_label.configure(text=str(v))
-        self._apply(lambda: self.dev.set_dpi(value), ok, f"DPI {value}", lambda v: {"dpi": v})
+        self._apply(lambda: self.dev.set_dpi(value), ok, f"DPI {value}", {"dpi": int(value)}, expect=int(value),
+                    hint="Se for um mouse G, ligue \"Controlar pelo computador\" em Perfis do mouse.")
 
     def _build_rate(self, choices, cur):
         tk, ttk = self.tk, self.ttk
@@ -346,7 +358,7 @@ class App:
     def _rate_apply(self):
         hz = self.rate_var.get()
         self._apply(lambda: self.dev.set_report_rate(hz), lambda v: self.rate_var.set(v or 0),
-                    f"Taxa {hz} Hz", lambda v: {"report_rate": v})
+                    f"Taxa {hz} Hz", {"report_rate": hz}, expect=hz)
 
     def _build_wheel(self, ss, hw):
         tk, ttk = self.tk, self.ttk
@@ -390,12 +402,12 @@ class App:
     def _hires_apply(self):
         v = self.hw_hires.get()
         self._apply(lambda: self.dev.set_hires_wheel(hires=v), self._hw_sync, "Alta resolução",
-                    lambda hw: {"hires": hw["hires"]})
+                    {"hires": v}, expect=lambda hw: hw["hires"] == v)
 
     def _invert_apply(self):
         v = self.hw_inv.get()
         self._apply(lambda: self.dev.set_hires_wheel(invert=v), self._hw_sync, "Inverter rolagem",
-                    lambda hw: {"invert": hw["invert"]})
+                    {"invert": v}, expect=lambda hw: hw["invert"] == v)
 
     def _hw_sync(self, hw):
         self.hw_hires.set(hw["hires"])
@@ -419,9 +431,8 @@ class App:
                 self.ss_thr.set(t)
                 self.ss_lbl.configure(text=str(t))
             self._ss_enable()
-        # guarda o que a pessoa escolheu (no modo livre o limiar lido pode ser o antigo)
         self._apply(lambda: self.dev.set_smartshift(mode, thr), ok, "Roda",
-                    lambda res: {"smartshift": [mode, thr]})
+                    {"smartshift": [mode, thr]}, expect=lambda res: res[0] == mode)
 
     def _build_host(self, on):
         tk, ttk = self.tk, self.ttk
@@ -436,7 +447,7 @@ class App:
     def _host_apply(self):
         v = self.host_var.get()
         self._apply(lambda: self.dev.set_host_mode(v), self._host_done, "Modo host",
-                    lambda r: {"host_mode": r})
+                    {"host_mode": v}, expect=v)
 
     def _host_done(self, v):
         self.host_var.set(v)
@@ -554,21 +565,55 @@ class App:
             self.say(f"Ajustes salvos de {self.dev.name} apagados. O mouse fica como está agora.")
 
     # ---- aplicar ----
-    def _apply(self, fn, ok, what, save=None):
+    def _remember(self, dev, wanted):
+        """Salva o que a pessoa ESCOLHEU (nao o que o mouse respondeu). Devolve erro ou None."""
+        if not wanted:
+            return None
+        try:
+            config.remember(dev.name, **wanted)
+        except OSError as e:
+            return str(e)
+        return None
+
+    def _apply(self, fn, ok, what, wanted=None, expect=None, hint=""):
+        """Manda o ajuste para o mouse, salva a escolha e confere a resposta.
+
+        wanted: dict com o valor escolhido, salvo antes de mexer na tela.
+        expect: valor esperado na resposta (ou funcao resposta -> bool) para avisar
+                quando o mouse ficou com outro valor.
+        """
         self.say(f"Aplicando: {what}...")
         dev = self.dev
 
         def done(res):
-            ok(res)
-            if save is not None:
-                try:
-                    config.remember(dev.name, **save(res))
-                except OSError as e:
-                    self.say(f"{what}: aplicado, mas não deu para salvar ({e}).")
-                    return
-            self.say(f"{what}: aplicado e salvo.")
+            err = self._remember(dev, wanted)
+            try:
+                ok(res)
+            except self.tk.TclError:
+                pass  # o cartao foi redesenhado enquanto o mouse respondia
+            if err:
+                self.say(f"{what}: aplicado, mas não deu para salvar ({err}).")
+                return
+            matches = True
+            if callable(expect):
+                matches = bool(expect(res))
+            elif expect is not None:
+                matches = res == expect
+            if not matches:
+                self.say(f"{what}: salvo, mas o mouse respondeu {res}. {hint}".strip())
+            else:
+                self.say(f"{what}: aplicado e salvo.")
 
         def fail(e):
+            unreachable = isinstance(e, (H.HidppTimeout, OSError)) or (
+                isinstance(e, H.HidppError) and e.hidpp10)
+            if unreachable:
+                # mouse dormindo ou fora de alcance: guarda a escolha para aplicar quando ele voltar
+                err = self._remember(dev, wanted)
+                if wanted and not err:
+                    self.say(f"{what}: o mouse não respondeu. Salvei e aplico quando ele reconectar "
+                             "(ou mexa o mouse e tente de novo).")
+                    return
             self.say(f"{what}: não deu certo ({e}). Mexa o mouse e tente de novo.")
         self.worker.submit(fn, done, fail)
 

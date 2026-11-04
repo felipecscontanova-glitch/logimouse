@@ -69,10 +69,33 @@ def save(cfg):
     os.replace(tmp, config_file())
 
 
+class _locked:
+    """Trava o config.json enquanto le-modifica-grava (painel e bandeja escrevem nele)."""
+
+    def __enter__(self):
+        self.fh = None
+        if DRY_RUN:
+            return self
+        try:
+            os.makedirs(config_dir(), exist_ok=True)
+            self.fh = open(os.path.join(config_dir(), ".lock"), "a+")
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        except OSError:
+            self.fh = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.fh is not None:
+            fcntl.flock(self.fh, fcntl.LOCK_UN)
+            self.fh.close()
+        return False
+
+
 def set_option(key, value):
-    cfg = load()
-    cfg[key] = value
-    save(cfg)
+    with _locked():
+        cfg = load()
+        cfg[key] = value
+        save(cfg)
 
 
 def get_option(key):
@@ -83,15 +106,17 @@ def remember(device_name, **values):
     """Guarda os ajustes que a pessoa mudou para este mouse."""
     if not device_name:
         return
-    cfg = load()
-    cfg["devices"].setdefault(device_name, {}).update(values)
-    save(cfg)
+    with _locked():
+        cfg = load()
+        cfg["devices"].setdefault(device_name, {}).update(values)
+        save(cfg)
 
 
 def forget(device_name):
-    cfg = load()
-    cfg["devices"].pop(device_name, None)
-    save(cfg)
+    with _locked():
+        cfg = load()
+        cfg["devices"].pop(device_name, None)
+        save(cfg)
 
 
 def device_settings(device_name):
