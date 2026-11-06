@@ -1,22 +1,43 @@
 """Modo terminal."""
 
+import os
+
 from . import __version__
 from . import config
 from . import hidpp as H
 from . import update as U
 
 
+def _print_headsets(headsets):
+    from .headset import HeadsetError
+    for h in headsets:
+        print(f"\n== {h.name}  [{h.kind_name}, {h.connection}]")
+        try:
+            b = h.read_battery()
+            print(f"  Bateria: {H.battery_text(b)}" + (f"  {b['status']}" if b.get("status") not in ("", "Ligado") else "")
+                  + f"  ({b['source']})")
+        except HeadsetError as e:
+            print(f"  Bateria: {e}")
+        h.close()
+
+
 def run_cli(dpi=None, demo=False):
     if demo:
-        from .demo import discover_demo
+        from .demo import discover_demo, discover_demo_headsets
         config.DRY_RUN = True
         devices, problems = discover_demo()
+        headsets, hp = discover_demo_headsets()
     else:
+        from . import headset as HS
         devices, problems = H.discover()
-    for p in problems:
+        headsets, hp = HS.discover()
+    if headsets and not devices:
+        problems = [p for p in problems if "Logitech" not in p]
+    for p in problems + hp:
         print("!", p)
+    _print_headsets(headsets)
     if not devices:
-        return 1
+        return 0 if headsets else 1
     for d in devices:
         print(f"\n== {d.name}  [{d.kind_name}, {d.connection}, HID++ {d.protocol[0]}.{d.protocol[1]}]")
         if dpi:
@@ -93,3 +114,21 @@ def run_reapply():
         print(f"{d.name}: reaplicado {', '.join(done) or 'nada'}"
               + (f" (falhou: {', '.join(failed)})" if failed else ""))
     return 0 if devices else 1
+
+
+def run_diagnose():
+    from .headset import diagnose
+    lines = []
+
+    def out(line=""):
+        print(line, flush=True)
+        lines.append(line)
+    diagnose(out=out)
+    path = os.path.expanduser("~/logimouse-diagnostico.txt")
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"\nSalvo em {path}: mande esse arquivo (ou um print desta tela).")
+    except OSError:
+        pass
+    return 0

@@ -7,6 +7,7 @@ O TrayApp e so a parte visual (AppIndicator).
 
 import os
 import queue
+import select
 import shutil
 import signal
 import subprocess
@@ -17,6 +18,7 @@ import traceback
 
 from . import APP_NAME, __version__
 from . import config
+from . import headset as HS
 from . import hidpp as H
 from . import update as U
 
@@ -302,6 +304,153 @@ class Monitor:
                 self._schedule(dev, self.SETTLE, reconnect=True)
 
 
+class HeadsetWatcher:
+    """Bateria dos headsets: pergunta de tempos em tempos e escuta o que o receptor manda sozinho."""
+
+    POLL = 60       # s entre perguntas de bateria
+    OFF_POLL = 30   # s entre tentativas quando o fone esta desligado
+    RESCAN = 10     # s: confere se um receptor apareceu/sumiu
+    LOW = 15
+
+    def __init__(self, discover_fn=HS.discover, nodes_fn=lambda: HS.hid_nodes(HS.MCHOSE_VID),
+                 on_change=None, on_low_battery=None, clock=time.monotonic):
+        self.discover_fn = discover_fn
+        self.nodes_fn = nodes_fn
+        self.on_change = on_change or (lambda snap: None)
+        self.on_low_battery = on_low_battery or (lambda name, pct: None)
+        self.clock = clock
+        self.headsets = []
+        self.info = {}
+        self.node_key = None
+        self.next_rescan = 0.0
+        self.next_full = 0.0
+        self._changed = False
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        while not self._stop.is_set():
+            try:
+                self.step(1.0)
+            except Exception:  # noqa: BLE001
+                log("erro inesperado (headset):\n" + traceback.format_exc())
+                self.node_key = None
+                self._stop.wait(5)
+
+    def snapshot(self):
+        return [dict(name=h.name, kind=h.kind_name, pointer=False, headset=True, connection=h.connection,
+                     online=self.info[h]["online"], battery=self.info[h]["battery"], last_apply=None)
+                for h in self.headsets]
+
+    def _key(self):
+        try:
+            return tuple(sorted(n["path"] for n in self.nodes_fn()))
+        except OSError:
+            return ()
+
+    def _rediscover(self, now):
+        old = {h.name: self.info[h] for h in self.headsets}
+        for h in self.headsets:
+            h.close()
+        try:
+            self.headsets, problems = self.discover_fn()
+        except Exception as e:  # noqa: BLE001
+            self.headsets, problems = [], [str(e)]
+        for p in problems:
+            log(p)
+        self.info = {}
+        for h in self.headsets:
+            prev = old.get(h.name)
+            self.info[h] = dict(online=prev["online"] if prev else True,
+                                battery=prev["battery"] if prev else None,
+                                low_sent=prev["low_sent"] if prev else False, next_poll=now)
+        self.node_key = self._key()
+        self.next_full = now + 5 * self.POLL  # UPower: Bluetooth liga e desliga sem mudar os receptores
+        if self.headsets or old:
+            log("headsets:", ", ".join(h.name for h in self.headsets) or "nenhum")
+        self._changed = True
+
+    def step(self, timeout=1.0):
+        now = self.clock()
+        if now >= self.next_rescan:
+            self.next_rescan = now + self.RESCAN
+            if self._key() != self.node_key or now >= self.next_full:
+                self._rediscover(now)
+        for h in self.headsets:
+            i = self.info[h]
+            if now >= i["next_poll"]:
+                self._poll(h, now)
+        self._listen(timeout)
+        if self._changed:
+            self._changed = False
+            self.on_change(self.snapshot())
+
+    def _poll(self, h, now):
+        i = self.info[h]
+        try:
+            b = h.battery()
+        except HS.HeadsetError as e:
+            if i["online"]:
+                log(f"{h.name}: {e}")
+                self._changed = True
+            i["online"] = False
+            i["next_poll"] = now + self.OFF_POLL
+            if isinstance(e, HS.HeadsetTimeout):
+                return
+            self.node_key = None  # receptor tirado: procura de novo
+            return
+        i["next_poll"] = now + self.POLL
+        self._battery(h, b)
+
+    def _battery(self, h, b):
+        i = self.info[h]
+        if not i["online"] or b != i["battery"]:
+            self._changed = True
+        i["online"] = True
+        i["battery"] = b
+        v = H.battery_value(b)
+        if v is None:
+            return
+        if b.get("charging") or v > self.LOW + 10:
+            i["low_sent"] = False
+        elif v <= self.LOW and not i["low_sent"] and config.get_option("notify_low"):
+            i["low_sent"] = True
+            self.on_low_battery(h.name, v)
+
+    def _listen(self, timeout):
+        ports = {}
+        for h in self.headsets:
+            t = getattr(h, "t", None)
+            if t is not None:
+                try:
+                    ports[t.fileno()] = h
+                except (AttributeError, OSError):
+                    pass
+        if not ports:
+            self._stop.wait(timeout)
+            return
+        try:
+            ready, _, _ = select.select(list(ports), [], [], timeout)
+        except (OSError, ValueError):
+            self.node_key = None
+            return
+        for fd in ready:
+            h = ports[fd]
+            for _ in range(64):
+                try:
+                    pkt = h.t.read(0)
+                except OSError:
+                    self.node_key = None
+                    break
+                if pkt is None:
+                    break
+                b = h.parse(pkt)
+                if b is not None and b["percent"]:
+                    self._battery(h, b)
+
+
 # --------------------------------------------------------------------------
 # Parte visual
 # --------------------------------------------------------------------------
@@ -332,6 +481,8 @@ class TrayApp:
         self.Gtk, self.GLib, self.AI = Gtk, GLib, AI
         self.demo = demo
         self.snap = []
+        self.mouse_snap = []
+        self.head_snap = []
         self._sig = None
         self._building = False
 
@@ -344,17 +495,24 @@ class TrayApp:
             from . import demo as D
             disc, nodes = D.discover_demo, D.demo_nodes
             self.fake = D.shared_mouse()
+            hdisc, hnodes = D.discover_demo_headsets, (lambda: [])
         else:
             disc, nodes = H.discover, H.hidpp_nodes
+            hdisc, hnodes = HS.discover, (lambda: HS.hid_nodes(HS.MCHOSE_VID))
         self.monitor = Monitor(disc, nodes,
                                on_change=lambda s: GLib.idle_add(self.update, s),
                                on_low_battery=lambda n, p: GLib.idle_add(
                                    _notify, "Bateria do mouse baixa", f"{n}: {p}%. Hora de carregar."))
+        self.headsets = HeadsetWatcher(hdisc, hnodes,
+                                       on_change=lambda s: GLib.idle_add(self.update_headsets, s),
+                                       on_low_battery=lambda n, p: GLib.idle_add(
+                                           _notify, "Bateria do headset baixa", f"{n}: {p}%. Hora de carregar."))
         self.update_info = None
         self._upd_lock = threading.Lock()
         self._upd_stop = threading.Event()
         self.update([])
         threading.Thread(target=self.monitor.run, daemon=True).start()
+        threading.Thread(target=self.headsets.run, daemon=True).start()
         if not demo:
             threading.Thread(target=self._update_loop, daemon=True).start()
         for s in (signal.SIGINT, signal.SIGTERM):
@@ -363,20 +521,31 @@ class TrayApp:
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self.restart)
 
     def _primary(self):
-        online = [d for d in self.snap if d["online"] and d["battery"]]
+        online = [d for d in self.mouse_snap if d["online"] and d["battery"]]
         pointers = [d for d in online if d["pointer"]]
         return (pointers or online or [None])[0]
 
+    @staticmethod
+    def _bat_label(d):
+        return H.battery_text(d["battery"]) + (" ⚡" if d["battery"].get("charging") else "")
+
+    def update_headsets(self, snap):
+        self.head_snap = snap
+        return self.update(self.mouse_snap)
+
     def update(self, snap):
-        self.snap = snap
+        self.mouse_snap = snap
+        self.snap = snap + self.head_snap
+        parts = []
         p = self._primary()
         if p:
-            label = H.battery_text(p["battery"]) + (" ⚡" if p["battery"].get("charging") else "")
-        else:
-            label = ""
-        self.ind.set_label(label, "100% ⚡")
+            parts.append(self._bat_label(p))
+        head = next((d for d in self.head_snap if d["online"] and d["battery"]), None)
+        if head:
+            parts.append("🎧 " + self._bat_label(head))
+        self.ind.set_label("  ".join(parts), "100% ⚡  🎧 100% ⚡")
         sig = repr([(d["name"], d["online"], d["battery"], d["last_apply"] and d["last_apply"]["at"])
-                    for d in snap]) + repr((config.autostart_enabled(), config.get_option("reapply"),
+                    for d in self.snap]) + repr((config.autostart_enabled(), config.get_option("reapply"),
                                             config.get_option("notify_low"), config.get_option("auto_update"),
                                             self.update_info and self.update_info["latest"]))
         if sig != self._sig:
@@ -404,13 +573,17 @@ class TrayApp:
             menu.append(mi)
 
         if not self.snap:
-            item("Nenhum mouse Logitech encontrado")
+            item("Nenhum mouse ou headset encontrado")
         for d in self.snap:
-            if d["online"]:
+            icon = "🎧 " if d.get("headset") else ""
+            if d["online"] and d["battery"]:
                 b = d["battery"]
-                txt = f"{d['name']}: {H.battery_text(b)}" + (f" · {b['status']}" if b and b.get("status") else "")
+                shown = b.get("status") if b.get("status") not in (None, "", "Ligado") else ""
+                txt = f"{icon}{d['name']}: {H.battery_text(b)}" + (f" · {shown}" if shown else "")
+            elif d["online"]:
+                txt = f"{icon}{d['name']}: sem leitura de bateria"
             else:
-                txt = f"{d['name']}: desligado"
+                txt = f"{icon}{d['name']}: desligado"
             item(txt)
             la = d["last_apply"]
             if la and la["done"]:
@@ -520,6 +693,7 @@ class TrayApp:
     def restart(self):
         """Reabre a bandeja com a versao nova (mesmo processo, codigo novo)."""
         self.monitor.stop()
+        self.headsets.stop()
         self._upd_stop.set()
         cmd = config.launcher_command("--tray")
         try:
@@ -531,6 +705,7 @@ class TrayApp:
 
     def quit(self, *_):
         self.monitor.stop()
+        self.headsets.stop()
         self._upd_stop.set()
         self.Gtk.main_quit()
         return False

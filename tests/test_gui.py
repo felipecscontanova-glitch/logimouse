@@ -29,6 +29,7 @@ class PanelSavesWhatYouChose(unittest.TestCase):
         os.environ["XDG_CONFIG_HOME"] = self.tmp.name
         config.DRY_RUN = False
         D._shared = None
+        D._shared_headset = None
         self.fake = D.shared_mouse()
         from logimouse import gui
         self.app = gui.App(tk, ttk, demo=True)
@@ -84,6 +85,17 @@ class PanelSavesWhatYouChose(unittest.TestCase):
         self.app._dpi_apply(400)
         self.pump(lambda: "Salvei" in self.status())
         self.assertEqual(self.saved_dpi(), 400)
+
+    def test_headset_listed_and_shows_battery(self):
+        labels = list(self.app.dev_combo.cget("values"))
+        self.assertTrue(any("V9 Pro" in v and "Headset" in v for v in labels), labels)
+        idx = next(i for i, d in enumerate(self.app.devices) if getattr(d, "is_headset", False))
+        self.app.dev_combo.current(idx)
+        self.app.select(idx)
+        self.pump(lambda: self.app.state.get("headset"))
+        self.assertEqual(self.app.bat_big.cget("text"), "58%")
+        self.assertIn("Receptor 2.4 GHz", self.app.dev_info.cget("text"))
+        self.assertEqual(self.saved_dpi(), None)  # headset nao mexe nos ajustes do mouse
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import traceback
 
 from . import APP_NAME, __version__
 from . import config
+from . import headset as HS
 from . import hidpp as H
 from . import update as U
 
@@ -189,16 +190,30 @@ class App:
         if self._busy:
             return
         self._busy = True
-        self.say("Procurando dispositivos Logitech...")
+        self.say("Procurando mouse e headset...")
         if self.demo:
-            from .demo import discover_demo
-            fn = discover_demo
+            from .demo import discover_demo, discover_demo_headsets
+            mice, heads = discover_demo, discover_demo_headsets
         else:
-            fn = H.discover
-        self.worker.submit(fn, self._scanned, self._failed)
+            mice, heads = H.discover, HS.discover
+
+        def both():
+            devices, problems = mice()
+            try:
+                hs, hp = heads()
+            except Exception as e:  # noqa: BLE001 - o headset nunca pode derrubar o mouse
+                hs, hp = [], [f"Headset: {e}"]
+            # sem mouse, "nenhum receptor Logitech" so atrapalha quando ha headset
+            if hs and not devices:
+                problems = [p for p in problems if "Logitech" not in p]
+            return devices + hs, problems + hp
+        self.worker.submit(both, self._scanned, self._failed)
 
     def _scanned(self, res):
         self._busy = False
+        for old in self.devices:
+            if getattr(old, "is_headset", False) and old is not self.dev:
+                old.close()
         self.devices, problems = res
         if not self.devices:
             self.dev_combo.configure(values=[])
@@ -226,22 +241,39 @@ class App:
         if i < 0 or i >= len(self.devices):
             return
         self.dev = d = self.devices[i]
-        self.dev_info.configure(text=f"{d.kind_name} · {d.connection} · HID++ {d.protocol[0]}.{d.protocol[1]}")
         self.clear_body()
         c = self.card("Aguarde")
         self.ttk.Label(c, text="Lendo configurações...", style="Card.TLabel").pack(anchor="w")
         self.say("")
+        if getattr(d, "is_headset", False):
+            self.dev_info.configure(text=d.detail)
+            self.worker.submit(lambda: self._read_headset(d), self._loaded, self._failed)
+            return
+        self.dev_info.configure(text=f"{d.kind_name} · {d.connection} · HID++ {d.protocol[0]}.{d.protocol[1]}")
         self.worker.submit(lambda: H.read_all(d), self._loaded, self._failed)
+
+    @staticmethod
+    def _read_headset(d):
+        try:
+            return dict(headset=True, battery=d.read_battery(), error=None)
+        except HS.HeadsetError as e:
+            return dict(headset=True, battery=None, error=str(e))
 
     def _loaded(self, s):
         self.state = s
         self.build()
-        self.say("Pronto. As mudanças são aplicadas na hora e ficam salvas.")
+        if s.get("headset"):
+            self.say("Pronto. A bateria do headset é atualizada a cada minuto.")
+        else:
+            self.say("Pronto. As mudanças são aplicadas na hora e ficam salvas.")
 
     # ---- cartoes ----
     def build(self):
         self.clear_body()
         s = self.state
+        if s.get("headset"):
+            self._build_headset(s)
+            return
         self._build_battery(s.get("battery"))
         if s.get("dpi") or s.get("pointer_speed") is not None:
             self._build_sensitivity(s.get("dpi"), s.get("pointer_speed"))
@@ -253,11 +285,36 @@ class App:
             self._build_host(s["host_mode"])
         self._build_app_card()
 
-    def _build_battery(self, b):
+    def _build_headset(self, s):
+        ttk = self.ttk
+        d = self.dev
+        self._build_battery(s.get("battery"), empty=(s.get("error") or "Sem leitura de bateria.") +
+                            "\nLigue o fone e clique em Atualizar.")
+        c = self.card("Headset")
+        rows = [("Modelo", d.name), ("Conexão", d.connection)]
+        if getattr(d, "pid", None) is not None and isinstance(d, HS.MchoseHeadset):
+            rows.append(("Receptor", f"{HS.MCHOSE_VID:04x}:{d.pid:04x}"))
+        for k, v in rows:
+            row = ttk.Frame(c, style="Card.TFrame")
+            row.pack(fill="x", pady=1)
+            ttk.Label(row, text=k, style="Muted.TLabel").pack(side="left")
+            ttk.Label(row, text=v, style="Card.TLabel").pack(side="right")
+        if isinstance(d, HS.MchoseHeadset):
+            note = ("Pelo receptor 2.4 GHz o fone não informa se está carregando: com o cabo plugado "
+                    "ele sai do 2.4 GHz. Volume, equalizador e luzes ainda não são controlados por aqui.")
+        else:
+            note = "Bateria informada pelo sistema (Bluetooth)."
+        ttk.Label(c, text=note, style="Muted.TLabel", wraplength=360, justify="left").pack(anchor="w", pady=(8, 0))
+        ttk.Label(c, text="% estranha ou não aparece? Rode no terminal: logimouse --diagnostico "
+                          "e mande o resultado.", style="Muted.TLabel", wraplength=360,
+                  justify="left").pack(anchor="w", pady=(6, 0))
+        self._build_app_card()
+
+    def _build_battery(self, b, empty="Este dispositivo não informa a bateria."):
         ttk = self.ttk
         c = self.card("Bateria")
         if not b:
-            ttk.Label(c, text="Este dispositivo não informa a bateria.", style="Muted.TLabel").pack(anchor="w")
+            ttk.Label(c, text=empty, style="Muted.TLabel", wraplength=360, justify="left").pack(anchor="w")
             return
         row = ttk.Frame(c, style="Card.TFrame")
         row.pack(fill="x")
@@ -479,7 +536,7 @@ class App:
         row.pack(fill="x", pady=(10, 0))
         self.tray_btn = ttk.Button(row, text="Mostrar ícone na barra agora", command=self._start_tray)
         self.tray_btn.pack(side="left")
-        if self.dev is not None:
+        if self.dev is not None and not getattr(self.dev, "is_headset", False):
             ttk.Button(row, text="Esquecer ajustes", command=self._forget).pack(side="right")
         self.tray_hint = ttk.Label(c, text="", style="Muted.TLabel", wraplength=360, justify="left")
         self.tray_hint.pack(anchor="w", pady=(6, 0))
@@ -627,7 +684,10 @@ class App:
                     v = H.battery_value(b)
                     if v is not None:
                         self.bat_bar.configure(value=v)
-            self.worker.submit(lambda: H.read_battery(d), upd, lambda e: None)
+            if getattr(d, "is_headset", False):
+                self.worker.submit(d.read_battery, upd, lambda e: None)
+            else:
+                self.worker.submit(lambda: H.read_battery(d), upd, lambda e: None)
         self.root.after(60_000, self._auto_battery)
 
     def run(self):

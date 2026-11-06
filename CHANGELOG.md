@@ -1,5 +1,18 @@
 # Histórico de versões
 
+## 1.3.0 (2026-11-06)
+
+- Bateria de headsets **MCHOSE** (V9 Pro, V9, X9) pelo receptor 2.4 GHz, sem o M HUB: no painel
+  (o headset aparece na lista junto com o mouse), na barra (`73%  🎧 58%`), no menu do ícone, no
+  `--cli` e com aviso de bateria baixa.
+- O receptor só recebe a pergunta da bateria se tiver o canal do fabricante (report 0x55 na
+  página 0xff90); avisos espontâneos de bateria também são lidos.
+- Headsets Bluetooth que informam bateria ao sistema (UPower) também aparecem.
+- `logimouse --diagnostico`: relatório (USB, HID, conversa com o receptor, UPower) salvo em
+  `~/logimouse-diagnostico.txt` para adaptar modelos novos.
+- Regra udev inclui o fabricante USB 3837 (MCHOSE): rode o `instalar.sh` de novo uma vez.
+- Corrige: o menu do ícone não se redesenhava quando só um dispositivo que não é o mouse mudava.
+
 ## 1.2.1 (2026-11-04)
 
 - Corrige: às vezes o painel aplicava o DPI (ou outro ajuste) no mouse, mas não salvava. Um erro

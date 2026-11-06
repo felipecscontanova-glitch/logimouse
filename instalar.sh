@@ -125,7 +125,7 @@ has_tray && TRAY_OK=1
 echo "ok"
 
 # ---------------------------------------------------------------- 2. permissao
-bold "2/5  Permissão para falar com o mouse (pede sua senha)"
+bold "2/5  Permissão para falar com o mouse e o headset (pede sua senha)"
 sudo install -D -m 644 "$DIR/data/42-logimouse.rules" "$RULE"
 sudo udevadm control --reload-rules
 sudo udevadm trigger --subsystem-match=hidraw --action=change

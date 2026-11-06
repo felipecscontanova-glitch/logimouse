@@ -1,5 +1,5 @@
 # LogiMouse: permite que o usuario logado converse com receptores e
-# dispositivos Logitech (HID++) sem precisar de sudo.
+# dispositivos Logitech (HID++) e headsets MCHOSE sem precisar de sudo.
 ACTION == "remove", GOTO="logimouse_end"
 SUBSYSTEM != "hidraw", GOTO="logimouse_end"
 
@@ -7,6 +7,9 @@ SUBSYSTEM != "hidraw", GOTO="logimouse_end"
 ATTRS{idVendor}=="046d", GOTO="logimouse_apply"
 # Dispositivos Logitech via Bluetooth
 KERNELS=="0005:046D:*", GOTO="logimouse_apply"
+# Receptor 2.4 GHz e cabo dos headsets MCHOSE (V9, V9 Pro, X9...)
+ATTRS{idVendor}=="3837", GOTO="logimouse_apply"
+KERNELS=="0005:3837:*", GOTO="logimouse_apply"
 GOTO="logimouse_end"
 
 LABEL="logimouse_apply"

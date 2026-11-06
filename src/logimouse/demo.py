@@ -168,3 +168,75 @@ def discover_demo(nodes=None):
 
 def demo_nodes():
     return [dict(path="demo", bus=0x03, pid=0, name="demo")]
+
+
+# --------------------------------------------------------------------------
+# Headset MCHOSE simulado
+# --------------------------------------------------------------------------
+# Descriptor parecido com o do receptor: report 0x55 de 63 bytes nos dois
+# sentidos, na pagina do fabricante 0xff90.
+MCHOSE_DESCRIPTOR = bytes([
+    0x06, 0x90, 0xFF, 0x09, 0x01, 0xA1, 0x01,       # Usage Page 0xff90, Usage 1, Collection
+    0x85, 0x55, 0x15, 0x00, 0x26, 0xFF, 0x00,       # Report ID 0x55, 0..255
+    0x75, 0x08, 0x95, 0x3F, 0x09, 0x01, 0x81, 0x02,  # 63 bytes de entrada
+    0x95, 0x3F, 0x09, 0x01, 0x91, 0x02,             # 63 bytes de saida
+    0xC0,
+])
+
+
+class FakeMchose:
+    """Receptor 2.4 GHz de um headset MCHOSE, com o 'ruido' que o de verdade manda."""
+
+    def __init__(self, battery=58):
+        self.lock = threading.RLock()
+        self.out = []
+        self._r, self._w = os.pipe()
+        self.battery = battery
+        self.online = True
+        self.writes = []
+
+    def fileno(self):
+        return self._r
+
+    def _push(self, pkt):
+        with self.lock:
+            self.out.append(bytes(pkt).ljust(64, b"\x00"))
+            os.write(self._w, b"x")
+
+    def write(self, m):
+        m = bytes(m)
+        self.writes.append(m)
+        if m[:3] == bytes([0x55, 0x65, 0x01]):
+            self._push([0x55, 0x00, 0x01])               # "estou vivo"
+            self._push([0x55, 0x65, 0x37, 0x05])         # outro campo, nao e bateria
+            self._push([0x55, 0x65, self.battery if self.online else 0, 0x02])
+
+    def battery_event(self, pct):
+        self.battery = pct
+        self._push([0x55, 0x65, pct, 0x02])
+
+    def read(self, timeout):
+        r, _, _ = select.select([self._r], [], [], max(0.0, timeout))
+        if not r:
+            return None
+        os.read(self._r, 1)
+        with self.lock:
+            return self.out.pop(0) if self.out else None
+
+    def close(self):
+        pass
+
+
+_shared_headset = None
+
+
+def shared_headset():
+    global _shared_headset
+    if _shared_headset is None:
+        _shared_headset = FakeMchose()
+    return _shared_headset
+
+
+def discover_demo_headsets():
+    from .headset import MchoseHeadset
+    return [MchoseHeadset(shared_headset(), "MCHOSE V9 Pro (demo)", 0x6046)], []

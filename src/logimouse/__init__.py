@@ -1,4 +1,4 @@
-"""LogiMouse: bateria, DPI e roda de mouses Logitech no Linux (HID++ 2.0)."""
+"""LogiMouse: mouses Logitech (HID++ 2.0) e bateria de headsets MCHOSE no Linux."""
 
 APP_NAME = "LogiMouse"
-__version__ = "1.2.1"
+__version__ = "1.3.0"

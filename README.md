@@ -1,8 +1,9 @@
 # LogiMouse
 
 Painel simples para mouses **Logitech no Linux**: bateria, DPI, taxa de atualização e roda de
-rolagem. Inclui um ícone na barra com a % da bateria, que também **reaplica seus ajustes sozinho**
-quando o mouse é desligado e ligado de novo.
+rolagem. Também mostra a **bateria de headsets MCHOSE** (V9 Pro, V9, X9), que não têm o M HUB para
+Linux. Inclui um ícone na barra com as baterias (`73%  🎧 58%`), que também **reaplica seus ajustes
+sozinho** quando o mouse é desligado e ligado de novo.
 
 Ele conversa direto com o mouse pelo protocolo **HID++ 2.0** (o mesmo do Logi Options+), sem
 programas da Logitech e sem nada rodando como root.
@@ -11,9 +12,11 @@ programas da Logitech e sem nada rodando como root.
   <img src="docs/painel.png" width="330" alt="Painel do LogiMouse: bateria, DPI e taxa de atualização">
   &nbsp;
   <img src="docs/painel-roda-e-app.png" width="330" alt="Painel do LogiMouse: roda de rolagem, perfis e opções do aplicativo">
+  &nbsp;
+  <img src="docs/painel-headset.png" width="330" alt="Painel do LogiMouse: bateria do headset MCHOSE V9 Pro">
 </p>
 
-<sub>Capturas feitas com o mouse simulado (`--demo`).</sub>
+<sub>Capturas feitas com o mouse e o headset simulados (`--demo`).</sub>
 
 ## O que ele faz
 
@@ -31,8 +34,25 @@ Cada parte só aparece se o seu mouse tiver o recurso.
 | **Reaplicar ajustes** | ao ligar o PC, ao religar o mouse, ao recolocar o receptor ou reconectar o Bluetooth |
 | **Iniciar com o sistema** | liga/desliga pelo painel ou pelo menu do ícone |
 | **Atualização automática** | procura versão nova aqui no GitHub uma vez por dia e instala sozinho |
+| **Headset MCHOSE** | bateria pelo receptor 2.4 GHz, no painel, na barra e com aviso de bateria baixa |
+| **Outros headsets Bluetooth** | bateria lida do sistema (UPower), quando o fone informa |
 
-Funciona com receptor **Unifying**, **Bolt** e **Lightspeed**, por **Bluetooth** ou pelo **cabo USB**.
+Mouse: funciona com receptor **Unifying**, **Bolt** e **Lightspeed**, por **Bluetooth** ou pelo **cabo USB**.
+
+### Headset MCHOSE
+
+O receptor 2.4 GHz dos headsets MCHOSE (chip C-Media, fabricante USB `3837`) responde à pergunta
+`55 65 01` com `55 65 <bateria> 02`. O protocolo foi descoberto para o **MCHOSE X9** pelo projeto
+[HeadsetControl](https://github.com/Sapd/HeadsetControl) a partir do app oficial (M HUB) e o V9 / V9 Pro
+usam o mesmo M HUB. O LogiMouse só faz essa pergunta se o receptor tiver exatamente esse canal do
+fabricante (report `0x55`), e ignora os outros avisos que o receptor manda sozinho.
+
+- **Carregando** não aparece pelo receptor: com o cabo de carga plugado o fone sai do 2.4 GHz.
+- No **Bluetooth**, a bateria vem do sistema, se o fone a informar.
+- Volume, equalizador e luzes ainda não são controlados.
+- Se o seu modelo não aparecer ou mostrar uma % estranha, rode `logimouse --diagnostico` com o fone
+  ligado e [abra uma issue](https://github.com/felipecscontanova-glitch/logimouse/issues) com o arquivo
+  `~/logimouse-diagnostico.txt`.
 
 ## Instalar
 
@@ -115,6 +135,7 @@ logimouse --autostart on  # liga o início com o sistema (off para desligar)
 logimouse --check-update  # vê se há versão nova no GitHub
 logimouse --update        # instala a versão nova agora
 logimouse --rollback      # volta para a versão anterior
+logimouse --diagnostico   # relatório do headset (para adaptar um modelo novo)
 logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajustes
 ```
 
@@ -139,6 +160,9 @@ logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajus
 | Rolagem rápida demais | desligue **Rolagem em alta resolução** |
 | Ícone não aparece no GNOME | ative a extensão AppIndicator (veja acima) |
 | Solaar aberto ao mesmo tempo | funciona, mas um pode sobrescrever o ajuste do outro; prefira usar só um |
+| Headset MCHOSE não aparece | rode o `instalar.sh` de novo (permissão do receptor) e recoloque o receptor |
+| Headset aparece "desligado" | ligue o fone; com o cabo de carga plugado ele sai do 2.4 GHz |
+| Headset com % estranha | `logimouse --diagnostico` e mande o resultado |
 
 Para ver o que o ícone está fazendo, feche-o e rode `logimouse --tray` no terminal.
 
@@ -156,12 +180,13 @@ Isso apaga o programa, o atalho, o início automático e a regra udev. Seus ajus
 ```text
 src/logimouse/
   hidpp.py     protocolo HID++ 2.0, descoberta e reaplicação de ajustes
+  headset.py   bateria de headsets MCHOSE (receptor 2.4 GHz) e UPower; --diagnostico
   gui.py       painel (Tkinter)
   tray.py      ícone na barra (AppIndicator) e monitor de reconexão
   config.py    ajustes salvos, início com o sistema, trava de instância única
   update.py    atualização automática pelas tags do GitHub
   cli.py       modo terminal
-  demo.py      mouse simulado para testes e --demo
+  demo.py      mouse e headset simulados para testes e --demo
 tests/         testes automáticos (rodam sem mouse)
 data/          regra udev
 instalar.sh    instalador
@@ -199,12 +224,15 @@ No dia seguinte (ou na hora, pelo botão), quem tem o ícone rodando recebe a ve
 
 ## Créditos
 
+O protocolo do headset MCHOSE vem do driver do MCHOSE X9 no [HeadsetControl](https://github.com/Sapd/HeadsetControl),
+que também é a melhor opção para outros headsets no Linux.
+
 A interpretação do protocolo HID++ foi conferida com o código do [Solaar](https://github.com/pwr-Solaar/Solaar),
 o gerenciador de dispositivos Logitech mais completo para Linux. Se você precisa remapear botões ou de
 regras avançadas, use o Solaar (linha MX e escritório) ou o [Piper](https://github.com/libratbag/piper) (linha G).
 
-LogiMouse não tem relação com a Logitech. "Logitech", "Unifying", "Bolt", "Lightspeed" e "Logi Options+"
-são marcas da Logitech.
+LogiMouse não tem relação com a Logitech nem com a MCHOSE. "Logitech", "Unifying", "Bolt", "Lightspeed" e
+"Logi Options+" são marcas da Logitech; "MCHOSE" é marca do seu fabricante.
 
 ## Licença
 
