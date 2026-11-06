@@ -41,7 +41,8 @@ Mouse: funciona com receptor **Unifying**, **Bolt** e **Lightspeed**, por **Blue
 
 ### Headset MCHOSE
 
-O receptor 2.4 GHz dos headsets MCHOSE (chip C-Media, fabricante USB `3837`) responde à pergunta
+O receptor 2.4 GHz dos headsets MCHOSE (chip C-Media; fabricante USB `3837` no X9 e `291d:385d` no
+V9 Pro) responde à pergunta
 `55 65 01` com `55 65 <bateria> 02`. O protocolo foi descoberto para o **MCHOSE X9** pelo projeto
 [HeadsetControl](https://github.com/Sapd/HeadsetControl) a partir do app oficial (M HUB) e o V9 / V9 Pro
 usam o mesmo M HUB. O LogiMouse só faz essa pergunta se o receptor tiver exatamente esse canal do

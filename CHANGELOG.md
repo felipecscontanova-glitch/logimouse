@@ -1,5 +1,15 @@
 # Histórico de versões
 
+## 1.3.1 (2026-11-06)
+
+- Reconhece o receptor do **MCHOSE V9 Pro**, que usa o fabricante USB `291d` (produto `385d`), e não
+  o `3837` do X9. O diagnóstico de um V9 Pro de verdade mostrou o mesmo canal de bateria do X9
+  (report 0x55 de 63 bytes na página 0xff90).
+- Receptores com "MCHOSE" no nome também são examinados, qualquer que seja o fabricante USB.
+- Nome do modelo sem o prefixo do chip ("C-Media Electronics Inc MCHOSE V9 PRO" vira "MCHOSE V9 PRO").
+- Regra udev inclui o fabricante `291d`: rode o `instalar.sh` de novo uma vez.
+- Testes com o report descriptor real do receptor do V9 Pro.
+
 ## 1.3.0 (2026-11-06)
 
 - Bateria de headsets **MCHOSE** (V9 Pro, V9, X9) pelo receptor 2.4 GHz, sem o M HUB: no painel

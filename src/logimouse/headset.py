@@ -3,7 +3,7 @@ Bateria de headsets sem programa para Linux.
 
 MCHOSE (V9, V9 Pro, X9 e parecidos), pelo receptor 2.4 GHz
 -----------------------------------------------------------
-O receptor (chip C-Media, fabricante USB 0x3837) tem uma colecao HID do
+O receptor (chip C-Media; fabricante USB 0x3837 no X9, 0x291d no V9 Pro) tem uma colecao HID do
 fabricante (usage page 0xff90) com o report 0x55 nos dois sentidos:
 
     pergunta: 55 65 01 00 ...      (mensagem 0x65, campo pedido 0x01 = bateria)
@@ -32,7 +32,9 @@ import subprocess
 import time
 
 MCHOSE_VID = 0x3837
-KNOWN_MODELS = {0x6045: "MCHOSE X9"}
+# Fabricantes USB usados nos receptores MCHOSE (visto no diagnostico de um V9 Pro: 291d:385d).
+MCHOSE_VIDS = (0x3837, 0x291D)
+KNOWN_MODELS = {(0x3837, 0x6045): "MCHOSE X9", (0x291D, 0x385D): "MCHOSE V9 Pro"}
 
 REPORT_ID = 0x55
 MSG_VALUE = 0x65
@@ -113,7 +115,9 @@ _HID_DIR = re.compile(r"^[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}\.[0-9A-Fa-
 
 
 def hid_nodes(vendor=None, root="/sys/class/hidraw"):
-    """Todos os /dev/hidrawN (opcionalmente de um fabricante), com descriptor."""
+    """Todos os /dev/hidrawN (opcionalmente de um ou mais fabricantes), com descriptor."""
+    if isinstance(vendor, int):
+        vendor = (vendor,)
     out = []
     paths = glob.glob(os.path.join(root, "hidraw*"))
     paths.sort(key=lambda p: int(re.sub(r"\D", "", os.path.basename(p)) or 0))
@@ -130,7 +134,7 @@ def hid_nodes(vendor=None, root="/sys/class/hidraw"):
         if len(parts) != 3:
             continue
         bus, vid, pid = (int(p, 16) for p in parts)
-        if vendor is not None and vid != vendor:
+        if vendor is not None and vid not in vendor:
             continue
         out.append(dict(path="/dev/" + os.path.basename(sp), bus=bus, vid=vid, pid=pid,
                         name=props.get("HID_NAME", "").strip(), desc=desc,
@@ -165,14 +169,23 @@ class HidrawPort:
             pass
 
 
+def mchose_nodes(root="/sys/class/hidraw"):
+    """Interfaces HID que podem ser de um receptor MCHOSE (por fabricante ou pelo nome)."""
+    return [n for n in hid_nodes(root=root)
+            if n["vid"] in MCHOSE_VIDS or "mchose" in n["name"].lower()]
+
+
 def model_name(node):
-    name = node.get("name") or ""
-    pid = node.get("pid")
-    if pid in KNOWN_MODELS and KNOWN_MODELS[pid].lower() not in name.lower():
-        return KNOWN_MODELS[pid]
-    if name and not re.fullmatch(r"(?i)(c-media.*|usb audio.*|generic.*)", name):
-        return name if "mchose" in name.lower() else f"MCHOSE {name}"
-    return f"Headset MCHOSE ({MCHOSE_VID:04x}:{pid:04x})"
+    name = (node.get("name") or "").strip()
+    vid, pid = node.get("vid", MCHOSE_VID), node.get("pid", 0)
+    m = re.search(r"(?i)mchose\b.*", name)
+    if m:  # "C-Media Electronics Inc MCHOSE V9 PRO" -> "MCHOSE V9 PRO"
+        return "MCHOSE" + m.group(0)[6:]
+    if (vid, pid) in KNOWN_MODELS:
+        return KNOWN_MODELS[(vid, pid)]
+    if name and not re.match(r"(?i)(c-media|usb audio|generic)", name):
+        return f"MCHOSE {name}"
+    return f"Headset MCHOSE ({vid:04x}:{pid:04x})"
 
 
 class MchoseHeadset:
@@ -182,9 +195,10 @@ class MchoseHeadset:
     is_headset = True
     protocol = None
 
-    def __init__(self, port, name, pid=0, bus=0x03, write_len=DEFAULT_LEN):
+    def __init__(self, port, name, pid=0, bus=0x03, write_len=DEFAULT_LEN, vid=MCHOSE_VID):
         self.t = port
         self.name = name
+        self.vid = vid
         self.pid = pid
         self.bus = bus
         self.write_len = write_len
@@ -199,7 +213,7 @@ class MchoseHeadset:
 
     @property
     def detail(self):
-        return f"{self.kind_name} · {self.connection} · {MCHOSE_VID:04x}:{self.pid:04x}"
+        return f"{self.kind_name} · {self.connection} · {self.vid:04x}:{self.pid:04x}"
 
     def _battery_dict(self, pct):
         return dict(percent=pct, level=None, status="Ligado", charging=False, voltage=None,
@@ -247,13 +261,13 @@ class MchoseHeadset:
 def discover_mchose(nodes=None):
     """Devolve (headsets, problemas)."""
     found, problems = [], []
-    nodes = hid_nodes(MCHOSE_VID) if nodes is None else nodes
+    nodes = mchose_nodes() if nodes is None else nodes
     seen_pid = set()
     for n in nodes:
         if n.get("virtual"):
             continue
         ok, wlen = mchose_endpoint(n["desc"])
-        if not ok or (n["pid"], n["bus"]) in seen_pid:
+        if not ok or (n["vid"], n["pid"], n["bus"]) in seen_pid:
             continue
         try:
             port = HidrawPort(n["path"])
@@ -264,8 +278,8 @@ def discover_mchose(nodes=None):
         except OSError as e:
             problems.append(f"{n['path']}: {e}")
             continue
-        seen_pid.add((n["pid"], n["bus"]))
-        found.append(MchoseHeadset(port, model_name(n), n["pid"], n["bus"], wlen))
+        seen_pid.add((n["vid"], n["pid"], n["bus"]))
+        found.append(MchoseHeadset(port, model_name(n), n["pid"], n["bus"], wlen, n["vid"]))
     return found, problems
 
 
@@ -388,11 +402,11 @@ def diagnose(listen=10.0, out=print):
         if not vid:
             continue
         name = f"{rd('manufacturer')} {rd('product')}".strip()
-        if vid == f"{MCHOSE_VID:04x}" or re.search(r"(?i)mchose|c-media|headset|audio", name):
+        if vid in {f"{v:04x}" for v in MCHOSE_VIDS} or re.search(r"(?i)mchose|c-media|headset|audio", name):
             out(f"  {vid}:{rd('idProduct')}  {name}")
     out("")
     out("== Interfaces HID que podem ser do headset")
-    nodes = [n for n in hid_nodes() if n["vid"] == MCHOSE_VID
+    nodes = [n for n in hid_nodes() if n["vid"] in MCHOSE_VIDS
              or re.search(r"(?i)mchose|c-media|headset|audio", n["name"])]
     if not nodes:
         out("  nenhuma (o receptor está na USB? com o fone ligado?)")

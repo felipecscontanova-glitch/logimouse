@@ -7,9 +7,11 @@ SUBSYSTEM != "hidraw", GOTO="logimouse_end"
 ATTRS{idVendor}=="046d", GOTO="logimouse_apply"
 # Dispositivos Logitech via Bluetooth
 KERNELS=="0005:046D:*", GOTO="logimouse_apply"
-# Receptor 2.4 GHz e cabo dos headsets MCHOSE (V9, V9 Pro, X9...)
+# Receptor 2.4 GHz e cabo dos headsets MCHOSE (X9: 3837; V9 Pro: 291d)
 ATTRS{idVendor}=="3837", GOTO="logimouse_apply"
+ATTRS{idVendor}=="291d", GOTO="logimouse_apply"
 KERNELS=="0005:3837:*", GOTO="logimouse_apply"
+KERNELS=="0005:291D:*", GOTO="logimouse_apply"
 GOTO="logimouse_end"
 
 LABEL="logimouse_apply"

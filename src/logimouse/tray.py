@@ -312,7 +312,7 @@ class HeadsetWatcher:
     RESCAN = 10     # s: confere se um receptor apareceu/sumiu
     LOW = 15
 
-    def __init__(self, discover_fn=HS.discover, nodes_fn=lambda: HS.hid_nodes(HS.MCHOSE_VID),
+    def __init__(self, discover_fn=HS.discover, nodes_fn=HS.mchose_nodes,
                  on_change=None, on_low_battery=None, clock=time.monotonic):
         self.discover_fn = discover_fn
         self.nodes_fn = nodes_fn
@@ -498,7 +498,7 @@ class TrayApp:
             hdisc, hnodes = D.discover_demo_headsets, (lambda: [])
         else:
             disc, nodes = H.discover, H.hidpp_nodes
-            hdisc, hnodes = HS.discover, (lambda: HS.hid_nodes(HS.MCHOSE_VID))
+            hdisc, hnodes = HS.discover, HS.mchose_nodes
         self.monitor = Monitor(disc, nodes,
                                on_change=lambda s: GLib.idle_add(self.update, s),
                                on_low_battery=lambda n, p: GLib.idle_add(

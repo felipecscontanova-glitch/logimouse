@@ -293,7 +293,7 @@ class App:
         c = self.card("Headset")
         rows = [("Modelo", d.name), ("Conexão", d.connection)]
         if getattr(d, "pid", None) is not None and isinstance(d, HS.MchoseHeadset):
-            rows.append(("Receptor", f"{HS.MCHOSE_VID:04x}:{d.pid:04x}"))
+            rows.append(("Receptor", f"{d.vid:04x}:{d.pid:04x}"))
         for k, v in rows:
             row = ttk.Frame(c, style="Card.TFrame")
             row.pack(fill="x", pady=1)

@@ -12,6 +12,19 @@ from logimouse import demo as D  # noqa: E402
 from logimouse import headset as HS  # noqa: E402
 from logimouse.tray import HeadsetWatcher  # noqa: E402
 
+# Descriptor real do receptor de um MCHOSE V9 Pro (291d:385d), do --diagnostico de um usuário.
+V9PRO_DESCRIPTOR = bytes.fromhex(
+    "06 21 ff 09 01 a1 01 15 00 26 ff 00 85 ed 75 08 95 01 09 00 81 02 09 00 91 02 09 00 95 0f b2 02 "
+    "01 c0 06 22 ff 09 01 a1 01 15 00 26 ff 00 85 aa 75 08 09 00 95 3f b2 02 01 c0 05 0c 09 01 a1 01 "
+    "85 06 15 00 25 01 09 e9 09 ea 09 e2 09 cd 09 b5 09 b6 09 b1 09 b7 75 01 95 08 81 42 75 01 95 08 "
+    "81 03 c0 05 0b 09 01 a1 01 85 07 15 00 25 01 09 20 09 97 75 01 95 02 81 23 75 06 95 01 81 03 09 "
+    "21 09 2f 09 50 75 01 95 03 81 07 09 06 a1 02 19 b0 29 bb 15 00 25 0c 75 04 95 01 81 40 c0 09 07 "
+    "05 09 75 01 95 01 81 02 05 08 15 00 25 01 09 08 09 17 09 18 09 19 09 1a 09 1e 09 1f 09 20 09 21 "
+    "09 22 09 23 09 24 09 25 09 26 09 09 75 01 95 0f 91 02 75 01 95 01 91 03 c0 06 90 ff 09 01 a1 01 "
+    "09 03 85 55 15 00 26 ff 00 75 08 95 3f 82 02 01 09 04 15 00 25 01 75 08 95 3f 91 01 c0 06 82 ff "
+    "09 01 a1 01 09 03 85 41 15 00 26 ff 00 75 08 95 3f 81 02 09 04 15 00 26 ff 00 75 08 95 3f 91 02 c0"
+)
+
 UPOWER_BT = """  native-path:          /org/bluez/hci0/dev_11_22_33_44_55_66
   vendor:               MCHOSE
   model:                MCHOSE V9 Pro
@@ -53,6 +66,15 @@ class DescriptorTests(unittest.TestCase):
         self.assertEqual(reports[("out", 0x55)]["bits"], 63 * 8)
         self.assertIn(0xFF90, reports[("in", 0x55)]["pages"])
         self.assertEqual(HS.mchose_endpoint(D.MCHOSE_DESCRIPTOR), (True, 64))
+
+    def test_real_v9_pro_descriptor(self):
+        reports = HS.parse_report_descriptor(V9PRO_DESCRIPTOR)
+        # o mesmo que o --diagnostico do usuário listou
+        self.assertEqual(reports[("in", 0x55)], {"bits": 63 * 8, "pages": {0xFF90}})
+        self.assertEqual(reports[("out", 0x55)], {"bits": 63 * 8, "pages": {0xFF90}})
+        self.assertEqual(reports[("feat", 0xED)]["bits"], 15 * 8)
+        self.assertEqual(reports[("in", 0x07)]["pages"], {0x09, 0x0B})
+        self.assertEqual(HS.mchose_endpoint(V9PRO_DESCRIPTOR), (True, 64))
 
     def test_ignores_normal_audio_controls(self):
         consumer = bytes([0x05, 0x0C, 0x09, 0x01, 0xA1, 0x01, 0x85, 0x55, 0x75, 0x01, 0x95, 0x08,
@@ -100,6 +122,9 @@ class MchoseTests(unittest.TestCase):
         self.assertIsNone(h.parse(b""))
 
     def test_model_names(self):
+        self.assertEqual(HS.model_name(dict(name="C-Media Electronics Inc MCHOSE V9 PRO", vid=0x291D,
+                                            pid=0x385D)), "MCHOSE V9 PRO")
+        self.assertEqual(HS.model_name(dict(name="", vid=0x291D, pid=0x385D)), "MCHOSE V9 Pro")
         self.assertEqual(HS.model_name(dict(name="", pid=0x6045)), "MCHOSE X9")
         self.assertEqual(HS.model_name(dict(name="MCHOSE V9 Pro", pid=0x6046)), "MCHOSE V9 Pro")
         self.assertEqual(HS.model_name(dict(name="V9 Pro Dongle", pid=0x6046)), "MCHOSE V9 Pro Dongle")
@@ -151,6 +176,31 @@ class SysfsDiscoveryTests(unittest.TestCase):
         self.assertEqual(opened, ["/dev/hidraw4"])
         self.assertEqual(found[0].name, "MCHOSE V9 Pro")
         self.assertEqual(problems, [])
+
+    def test_finds_real_v9_pro_receiver(self):
+        self.add(6, "0003:0000291D:0000385D", "C-Media Electronics Inc MCHOSE V9 PRO", V9PRO_DESCRIPTOR)
+        self.add(7, "0003:0000046D:0000C53F", "Logitech USB Receiver", D.MCHOSE_DESCRIPTOR)
+        nodes = HS.mchose_nodes(root=self.root)
+        self.assertEqual([n["path"] for n in nodes], ["/dev/hidraw6"])
+        ports = {}
+
+        class Port:
+            def __init__(self, path):
+                ports[path] = D.FakeMchose(81)
+
+            def __getattr__(self, name):
+                return getattr(next(iter(ports.values())), name)
+
+        real = HS.HidrawPort
+        HS.HidrawPort = Port
+        try:
+            found, problems = HS.discover_mchose(nodes)
+        finally:
+            HS.HidrawPort = real
+        h = found[0]
+        self.assertEqual((h.name, h.vid, h.pid, h.write_len), ("MCHOSE V9 PRO", 0x291D, 0x385D, 64))
+        self.assertEqual(h.detail, "Headset · Receptor 2.4 GHz · 291d:385d")
+        self.assertEqual(h.battery()["percent"], 81)
 
     def test_permission_problem_is_reported(self):
         self.add(4, "0003:00003837:00006046", "MCHOSE V9 Pro", D.MCHOSE_DESCRIPTOR)
