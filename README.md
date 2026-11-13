@@ -10,12 +10,16 @@ Ele conversa direto com o mouse pelo protocolo **HID++ 2.0** (o mesmo do Logi Op
 programas da Logitech e sem nada rodando como root.
 
 <p align="center">
-  <img src="docs/painel.png" width="330" alt="Painel do LogiMouse: bateria, DPI e taxa de atualização">
-  &nbsp;
-  <img src="docs/painel-roda-e-app.png" width="330" alt="Painel do LogiMouse: roda de rolagem, perfis e opções do aplicativo">
-  &nbsp;
-  <img src="docs/painel-headset.png" width="330" alt="Painel do LogiMouse: bateria do headset MCHOSE V9 Pro">
+  <img src="docs/inicio.png" width="820" alt="Tela inicial do LogiMouse: cartões do mouse e do headset com bateria em anel">
 </p>
+
+| Mouse: níveis de DPI e taxa | Mouse: ação de cada botão |
+|---|---|
+| <img src="docs/mouse-desempenho.png" width="400" alt="Níveis de DPI e taxa de atualização"> | <img src="docs/mouse-botoes.png" width="400" alt="Remapear os botões do mouse"> |
+| **Mouse: macros** | **Mouse: perfis e troca por programa** |
+| <img src="docs/mouse-macros.png" width="400" alt="Editor de macros"> | <img src="docs/mouse-perfis.png" width="400" alt="Perfis e regras por programa"> |
+| **Headset: equalizador e surround 7.1** | **Headset: microfone sem ruído por IA** |
+| <img src="docs/headset-som.png" width="400" alt="Equalizador desenhável e surround"> | <img src="docs/headset-microfone.png" width="400" alt="Redução de ruído, voz e teste de microfone"> |
 
 <sub>Capturas feitas com o mouse e o headset simulados (`--demo`).</sub>
 

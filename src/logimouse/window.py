@@ -89,6 +89,7 @@ scale trough { background: #1c1d2e; min-height: 6px; border-radius: 999px; }
 scale highlight { background-image: linear-gradient(90deg, #a855f7, #22d3ee); border-radius: 999px; }
 scale slider { background: #f1f2f8; min-width: 18px; min-height: 18px; }
 switch:checked { background-image: linear-gradient(90deg, #a855f7, #22d3ee); }
+checkbutton check:checked { background: #a855f7; border-color: #a855f7; color: white; }
 levelbar block.filled { background-image: linear-gradient(90deg, #a855f7, #22d3ee); }
 levelbar block.empty { background: #1c1d2e; }
 entry, dropdown > button, spinbutton { background: #14152a; border: 1px solid #2a2b45; border-radius: 10px; color: #f1f2f8; }
@@ -2165,7 +2166,9 @@ def load_headset(h, demo=False):
     s["pw"] = AU.pipewire_ok()
     s["rnnoise"] = AU.rnnoise_plugin() if not demo else "demo"
     s["running"] = AU.service_running() if not demo else False
-    if not demo and s["pw"]:
+    if demo:  # volumes simulados para o --demo
+        s.update(sink={"id": 0, "name": "demo"}, source={"id": 0, "name": "demo"}, vol=62, micvol=80)
+    elif s["pw"]:
         sink, src = AU.find_headset()
         s["sink"], s["source"] = sink, src
         if sink:
