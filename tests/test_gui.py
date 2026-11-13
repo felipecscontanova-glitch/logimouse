@@ -31,7 +31,7 @@ class PanelSavesWhatYouChose(unittest.TestCase):
         D._shared = None
         D._shared_headset = None
         self.fake = D.shared_mouse()
-        from logimouse import gui
+        from logimouse import gui_tk as gui
         self.app = gui.App(tk, ttk, demo=True)
         self.pump(lambda: self.app.state.get("dpi"))
 

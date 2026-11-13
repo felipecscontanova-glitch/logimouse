@@ -35,6 +35,9 @@ PAGE_URL = "https://github.com/{repo}"
 MAX_DOWNLOAD = 20 * 1024 * 1024
 MARKER = ".instalado"
 INSTALLED_RULE = "/etc/udev/rules.d/42-logimouse.rules"
+# regras de permissao que o instalar.sh copia para /etc/udev/rules.d
+RULES = ("42-logimouse.rules", "71-logimouse-macros.rules")
+RULES_DIR = "/etc/udev/rules.d"
 CHECK_EVERY = 24 * 3600
 
 
@@ -155,14 +158,14 @@ def why_not_self_update():
 # Instalar
 # --------------------------------------------------------------------------
 def _safe_members(tar):
-    """Arquivos do pacote: src/logimouse/** e data/42-logimouse.rules, sem truques de caminho."""
+    """Arquivos do pacote: src/logimouse/** e as regras data/*.rules conhecidas, sem truques de caminho."""
     names = tar.getnames()
     if not names:
         raise UpdateError("pacote vazio")
     top = names[0].split("/", 1)[0]
     pkg_prefix = f"{top}/src/logimouse/"
-    rule_name = f"{top}/data/42-logimouse.rules"
-    files, rule = {}, None
+    rule_names = {f"{top}/data/{r}": r for r in RULES}
+    files, rules = {}, {}
     for m in tar.getmembers():
         n = m.name
         if n.startswith("/") or ".." in n.split("/") or not (n == top or n.startswith(top + "/")):
@@ -177,11 +180,11 @@ def _safe_members(tar):
             rel = n[len(pkg_prefix):]
             if rel and "__pycache__" not in rel.split("/"):
                 files[rel] = m
-        elif n == rule_name:
-            rule = m
+        elif n in rule_names:
+            rules[rule_names[n]] = m
     if "__init__.py" not in files:
         raise UpdateError("pacote sem o programa")
-    return files, rule
+    return files, rules
 
 
 def _verify(staging_parent, expected):
@@ -190,6 +193,9 @@ def _verify(staging_parent, expected):
         raise UpdateError("a versão nova tem arquivos com erro")
     probe = ("import logimouse, logimouse.hidpp, logimouse.config, logimouse.cli, "
              "logimouse.tray, logimouse.gui, logimouse.update; print(logimouse.__version__)")
+    if os.path.exists(os.path.join(pkg, "onboard.py")):
+        probe = probe.replace("logimouse.update;", "logimouse.update, logimouse.onboard, logimouse.audio, "
+                              "logimouse.macros, logimouse.profiles;")
     env = dict(os.environ, PYTHONPATH=staging_parent)
     try:
         out = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path.insert(0, %r); %s"
@@ -226,7 +232,7 @@ def install(ref, version, data=None):
         except (tarfile.TarError, OSError, EOFError) as e:
             raise UpdateError("o download veio corrompido") from e
         with tar:
-            files, rule = _safe_members(tar)
+            files, rules = _safe_members(tar)
             staging = os.path.join(work, "logimouse")
             for rel, m in files.items():
                 dest = os.path.join(staging, *rel.split("/"))
@@ -234,7 +240,7 @@ def install(ref, version, data=None):
                 src = tar.extractfile(m)
                 with open(dest, "wb") as fh:
                     shutil.copyfileobj(src, fh)
-            rule_bytes = tar.extractfile(rule).read() if rule is not None else None
+            rule_bytes = {name: tar.extractfile(m).read() for name, m in rules.items()}
         _verify(work, expected)
 
         shutil.rmtree(backup, ignore_errors=True)
@@ -250,10 +256,10 @@ def install(ref, version, data=None):
         shutil.rmtree(work, ignore_errors=True)
 
     needs_installer = False
-    if rule_bytes is not None:
+    for name, data_bytes in rule_bytes.items():
         try:
-            with open(INSTALLED_RULE, "rb") as fh:
-                needs_installer = fh.read() != rule_bytes
+            with open(os.path.join(RULES_DIR, name), "rb") as fh:
+                needs_installer = needs_installer or fh.read() != data_bytes
         except OSError:
             needs_installer = True
     config.set_option("updated_to", expected)

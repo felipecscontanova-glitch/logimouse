@@ -20,7 +20,12 @@ from . import APP_NAME, __version__
 from . import config
 from . import headset as HS
 from . import hidpp as H
+from . import macros as M
+from . import onboard as O
+from . import profiles as P
 from . import update as U
+
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 
 
 def log(*args):
@@ -454,10 +459,59 @@ class HeadsetWatcher:
 # --------------------------------------------------------------------------
 # Parte visual
 # --------------------------------------------------------------------------
+class ProfileSwitcher:
+    """Grava no mouse o perfil do programa aberto (regras feitas no painel)."""
+
+    EVERY = 3.0
+
+    def __init__(self, monitor, on_switch=None, programs=P.running_programs):
+        self.monitor = monitor
+        self.on_switch = on_switch or (lambda dev, name: None)
+        self.programs = programs
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        while not self._stop.wait(self.EVERY):
+            try:
+                self.step()
+            except Exception:  # noqa: BLE001 - nunca derruba a bandeja
+                log("troca de perfil:\n" + traceback.format_exc())
+
+    def step(self):
+        progs = None
+        for dev in list(self.monitor.devices):
+            info = self.monitor.info.get(dev) or {}
+            if not info.get("online"):
+                continue
+            data = P.device_data(dev.name)
+            if not data["rules"]:
+                continue
+            if progs is None:
+                progs = self.programs()
+            want = P.wanted_profile(data, progs)
+            if not want or want == data["active"] or want not in data["profiles"]:
+                continue
+            try:
+                ob = O.Onboard(dev)
+                p = ob.read_profile()
+                p.apply_dict(data["profiles"][want])
+                ob.write_profile(p, backup=False)
+            except (O.OnboardError, ValueError, *H.DEVICE_ERRORS) as e:
+                log(f"não deu para trocar o perfil de {dev.name}: {e}")
+                continue
+            data["active"] = want
+            P.save_device_data(dev.name, data)
+            log(f"{dev.name}: perfil {want}")
+            self.on_switch(dev.name, want)
+
+
 def _notify(title, body):
     if shutil.which("notify-send"):
         try:
-            subprocess.Popen(["notify-send", "-a", APP_NAME, "-i", "input-mouse", title, body],
+            subprocess.Popen(["notify-send", "-a", APP_NAME, "-i", os.path.join(ASSETS, "logimouse.svg"), title, body],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             pass
@@ -486,8 +540,8 @@ class TrayApp:
         self._sig = None
         self._building = False
 
-        self.ind = AI.Indicator.new("logimouse", "input-mouse-symbolic",
-                                    AI.IndicatorCategory.HARDWARE)
+        self.ind = AI.Indicator.new("logimouse", "logimouse-symbolic", AI.IndicatorCategory.HARDWARE)
+        self.ind.set_icon_theme_path(ASSETS)
         self.ind.set_title(APP_NAME)
         self.ind.set_status(AI.IndicatorStatus.ACTIVE)
 
@@ -515,6 +569,11 @@ class TrayApp:
         threading.Thread(target=self.headsets.run, daemon=True).start()
         if not demo:
             threading.Thread(target=self._update_loop, daemon=True).start()
+            self.macros = M.MacroService(P.macros, log=log)
+            threading.Thread(target=self.macros.run, daemon=True).start()
+        self.rules = ProfileSwitcher(self.monitor, on_switch=lambda dev, name: GLib.idle_add(
+            _notify, "Perfil do mouse", f"{dev}: perfil “{name}”"))
+        threading.Thread(target=self.rules.run, daemon=True).start()
         for s in (signal.SIGINT, signal.SIGTERM):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, s, self.quit)
         # SIGHUP: o painel instalou uma versao nova, reabre com ela
@@ -704,6 +763,9 @@ class TrayApp:
         return False
 
     def quit(self, *_):
+        self.rules.stop()
+        if getattr(self, "macros", None):
+            self.macros.stop.set()
         self.monitor.stop()
         self.headsets.stop()
         self._upd_stop.set()

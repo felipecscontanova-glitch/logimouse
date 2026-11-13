@@ -1,9 +1,10 @@
 # LogiMouse
 
-Painel simples para mouses **Logitech no Linux**: bateria, DPI, taxa de atualização e roda de
-rolagem. Também mostra a **bateria de headsets MCHOSE** (V9 Pro, V9, X9), que não têm o M HUB para
-Linux. Inclui um ícone na barra com as baterias (`73%  🎧 58%`), que também **reaplica seus ajustes
-sozinho** quando o mouse é desligado e ligado de novo.
+Painel para **mouses Logitech** e **headsets MCHOSE** no Linux. No mouse: níveis de DPI, taxa,
+**remapear os botões**, **macros**, **perfis que trocam sozinhos por programa** e uma área de teste.
+No headset (V9 Pro, V9, X9, que não têm o M HUB para Linux): bateria, **equalizador desenhável**,
+**surround virtual 7.1** e **redução de ruído do microfone por IA** (RNNoise). Inclui um ícone na barra
+com as baterias (`73%  🎧 58%`), que também **reaplica seus ajustes sozinho** quando o mouse religa.
 
 Ele conversa direto com o mouse pelo protocolo **HID++ 2.0** (o mesmo do Logi Options+), sem
 programas da Logitech e sem nada rodando como root.
@@ -17,6 +18,18 @@ programas da Logitech e sem nada rodando como root.
 </p>
 
 <sub>Capturas feitas com o mouse e o headset simulados (`--demo`).</sub>
+
+## O que há de novo na 2.0
+
+- Painel novo em **GTK 4 + libadwaita**, tema escuro, com tela inicial de cartões (um por dispositivo).
+- **Mouses G com memória de perfis** (G305, G502, G703...): até 5 níveis de DPI, "segurar para DPI
+  baixo" (sniper), taxa e **ação de cada botão** (clique, voltar/avançar, DPI, tecla ou atalho, mídia,
+  macro ou desativado), gravados na memória do mouse: valem em qualquer PC, mesmo sem o LogiMouse.
+  Antes de gravar, uma cópia do perfil vai para `~/.config/logimouse/backups/`.
+- **Macros** gravadas pelo teclado (teclas e esperas), rodando uma vez, enquanto segura ou liga/desliga.
+- **Perfis** salvos no computador e **troca automática** quando um programa abre (ex.: Valorant).
+- **Headset**: equalizador de 10 faixas (arraste os pontos), surround 7.1, microfone sem ruído por IA,
+  ganho e EQ da voz, teste de microfone (grave e ouça com e sem a redução de ruído), retorno da voz.
 
 ## O que ele faz
 
@@ -65,11 +78,14 @@ cd logimouse
 
 O instalador:
 
-1. instala o que faltar (Tkinter, GTK/AppIndicator e notificações) pelo `apt`, `dnf`, `pacman` ou `zypper`;
-2. cria a regra udev que deixa o seu usuário falar com o mouse sem `sudo`;
+1. instala o que faltar (GTK 4 + libadwaita, AppIndicator e notificações) pelo `apt`, `dnf`, `pacman` ou `zypper`;
+2. cria as regras udev que deixam o seu usuário falar com o mouse e o headset e usar macros, sem `sudo`;
 3. copia o app para `~/.local/share/logimouse` e cria o comando `logimouse`;
-4. coloca o **LogiMouse** no menu de aplicativos;
-5. pergunta se você quer **iniciar junto com o sistema** e já liga o ícone na barra.
+4. coloca o **LogiMouse** (com o ícone novo) no menu de aplicativos;
+5. pergunta se pode baixar o plugin **RNNoise** (redução de ruído por IA, ~36 MB, do
+   [noise-suppression-for-voice](https://github.com/werman/noise-suppression-for-voice));
+6. pergunta se você quer **iniciar junto com o sistema** e já liga o ícone na barra (ele roda as macros
+   e a troca de perfil por programa).
 
 Ele pede sua senha (para os pacotes e a regra udev). Use `./instalar.sh -y` para aceitar tudo sem perguntas.
 Depois disso o LogiMouse **se atualiza sozinho** (veja abaixo); seus ajustes são mantidos.
@@ -83,7 +99,9 @@ O app em si só usa a biblioteca padrão do Python 3.9 ou mais novo. Os pacotes 
 
 | Para | Ubuntu / Debian / Mint / Pop!\_OS | Fedora | Arch / Manjaro |
 |---|---|---|---|
-| Painel | `python3-tk` | `python3-tkinter` | `tk` |
+| Painel | `python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1` | `python3-gobject python3-cairo gtk4 libadwaita` | `python-gobject python-cairo gtk4 libadwaita` |
+| Painel antigo (se não houver GTK 4) | `python3-tk` | `python3-tkinter` | `tk` |
+| Equalizador, surround, microfone | PipeWire (já vem no Ubuntu 22.10+, Fedora, Arch) | | |
 | Ícone na barra | `python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1` | `python3-gobject gtk3 libayatana-appindicator-gtk3` | `python-gobject gtk3 libayatana-appindicator` |
 | Aviso de bateria baixa | `libnotify-bin` | `libnotify` | `libnotify` |
 
@@ -148,7 +166,12 @@ logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajus
 | `~/.config/autostart/logimouse.desktop` | início com o sistema |
 | `~/.local/share/logimouse/` | o programa (e `logimouse.anterior/`, a versão antes da última atualização) |
 | `~/.local/bin/logimouse` | o comando |
-| `/etc/udev/rules.d/42-logimouse.rules` | permissão de acesso ao mouse |
+| `/etc/udev/rules.d/42-logimouse.rules` | permissão de acesso ao mouse e ao headset |
+| `/etc/udev/rules.d/71-logimouse-macros.rules` | permissão para as macros (teclado virtual) |
+| `~/.config/logimouse/backups/` | cópia do perfil do mouse antes de cada gravação |
+| `~/.config/logimouse/audio.conf` | cadeia de filtros do PipeWire (equalizador, surround, microfone) |
+| `~/.config/systemd/user/logimouse-audio.service` | serviço que mantém o som do headset ligado |
+| `~/.local/lib/ladspa/librnnoise_ladspa.so` | plugin RNNoise (se você aceitou baixar) |
 
 ## Problemas comuns
 
@@ -157,7 +180,12 @@ logimouse --demo          # testa com um mouse simulado, sem mexer nos seus ajus
 | "Nenhum receptor ou mouse encontrado" | confira se o receptor está na USB ou o Bluetooth conectado; clique em **Atualizar** |
 | "Receptor encontrado, mas nenhum dispositivo respondeu" | mexa o mouse para acordá-lo e clique em **Atualizar** |
 | "Sem permissão" | rode o `instalar.sh` e recoloque o receptor |
-| DPI não muda (mouse G) | ligue **Controlar pelo computador (modo host)** |
+| DPI não muda (mouse G) | em **Perfis**, escolha "Memória do mouse" e grave o DPI em **Desempenho** |
+| Botão remapeado não funciona | em **Perfis**, confira se está em "Memória do mouse" |
+| Macro não roda | ligue "Iniciar com o sistema" (o ícone na barra roda as macros) e rode o `instalar.sh` de novo |
+| "Redução de ruído" desligada | rode o `instalar.sh` e aceite baixar o RNNoise |
+| Equalizador sem efeito | escolha a saída "… · Equalizador" (ou ligue "Usar como saída padrão") |
+| Painel abre no visual antigo | instale `python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1` (o `instalar.sh` faz isso) |
 | Rolagem rápida demais | desligue **Rolagem em alta resolução** |
 | Ícone não aparece no GNOME | ative a extensão AppIndicator (veja acima) |
 | Solaar aberto ao mesmo tempo | funciona, mas um pode sobrescrever o ajuste do outro; prefira usar só um |
@@ -182,8 +210,14 @@ Isso apaga o programa, o atalho, o início automático e a regra udev. Seus ajus
 src/logimouse/
   hidpp.py     protocolo HID++ 2.0, descoberta e reaplicação de ajustes
   headset.py   bateria de headsets MCHOSE (receptor 2.4 GHz) e UPower; --diagnostico
-  gui.py       painel (Tkinter)
-  tray.py      ícone na barra (AppIndicator) e monitor de reconexão
+  window.py    painel novo (GTK 4 + libadwaita)
+  gui.py       abre o painel novo ou, sem GTK 4, o antigo (gui_tk.py, Tkinter)
+  onboard.py   memória de perfis dos mouses G (DPI, taxa, botões; HID++ 0x8100)
+  macros.py    teclas, macros e teclado virtual (uinput)
+  profiles.py  perfis no computador e troca automática por programa
+  audio.py     equalizador, surround 7.1 e microfone sem ruído (PipeWire)
+  assets/      logo e ícone
+  tray.py      ícone na barra (AppIndicator), monitor de reconexão, macros e troca de perfil
   config.py    ajustes salvos, início com o sistema, trava de instância única
   update.py    atualização automática pelas tags do GitHub
   cli.py       modo terminal

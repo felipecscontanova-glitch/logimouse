@@ -61,14 +61,15 @@ class Sandbox(unittest.TestCase):
         self.rule_path = os.path.join(self.tmp.name, "42-logimouse.rules")
         with open(self.rule_path, "wb") as fh:
             fh.write(RULE)
-        self._saved = (U.prefix_dir, U.INSTALLED_RULE, U._get, os.environ.get("XDG_CONFIG_HOME"))
+        self._saved = (U.prefix_dir, U.INSTALLED_RULE, U.RULES_DIR, U._get, os.environ.get("XDG_CONFIG_HOME"))
         U.prefix_dir = lambda: self.prefix
         U.INSTALLED_RULE = self.rule_path
+        U.RULES_DIR = self.tmp.name
         os.environ["XDG_CONFIG_HOME"] = os.path.join(self.tmp.name, "config")
         config.DRY_RUN = False
 
     def tearDown(self):
-        U.prefix_dir, U.INSTALLED_RULE, U._get, cfg = self._saved
+        U.prefix_dir, U.INSTALLED_RULE, U.RULES_DIR, U._get, cfg = self._saved
         if cfg is None:
             os.environ.pop("XDG_CONFIG_HOME", None)
         else:

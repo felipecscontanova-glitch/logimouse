@@ -177,7 +177,7 @@ def set_autostart(on):
             "Name=LogiMouse (bandeja)\n"
             "Comment=Bateria do mouse Logitech na barra e reaplica seus ajustes\n"
             f"Exec={_desktop_exec('--tray')}\n"
-            "Icon=input-mouse\n"
+            "Icon=logimouse\n"
             "Terminal=false\n"
             "X-GNOME-Autostart-enabled=true\n"
             "X-GNOME-Autostart-Delay=5\n"

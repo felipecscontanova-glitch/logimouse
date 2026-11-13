@@ -1,0 +1,17 @@
+# LogiMouse: macros dos botoes do mouse.
+# O mouse manda uma tecla reservada (F13..F24) pela interface de teclado do
+# receptor Logitech; o LogiMouse escuta essa tecla e digita a macro por um
+# teclado virtual (uinput). Este arquivo da essas duas permissoes ao usuario
+# logado. Precisa vir depois do 60-input-id (ID_INPUT_KEYBOARD) e antes do
+# 73-seat-late (que aplica o uaccess).
+ACTION=="remove", GOTO="logimouse_macros_end"
+
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+
+SUBSYSTEM!="input", GOTO="logimouse_macros_end"
+KERNEL!="event*", GOTO="logimouse_macros_end"
+ENV{ID_INPUT_KEYBOARD}!="1", GOTO="logimouse_macros_end"
+ATTRS{idVendor}=="046d", TAG+="uaccess"
+KERNELS=="0005:046D:*", TAG+="uaccess"
+
+LABEL="logimouse_macros_end"

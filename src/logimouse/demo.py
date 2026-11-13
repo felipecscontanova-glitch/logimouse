@@ -7,6 +7,20 @@ import threading
 from . import hidpp as H
 
 
+# Memoria de um G305 de verdade (perfil de fabrica): 400/800/1600/3200 DPI, 1000 Hz, 6 botoes.
+G305_DIRECTORY = bytes.fromhex("00010100ffff0000")
+G305_PROFILE = bytes.fromhex(
+    "010100900120034006800c0000ffffffff00ffffffffffffffffffffffffffff"
+    "800100018001000280010004800100088001001090050000ffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    "ffffffffffffffffffffffffffffffff0000000000001f400000000000000000"
+    "001f40000000ffffffffffffffffffffffffffffffffffffffffffffff7a22"
+)
+
+
 class FakeMouse:
     """Transporte falso que responde como um mouse HID++ 2.0 atras de um receptor."""
 
@@ -27,6 +41,9 @@ class FakeMouse:
         self.ignore_dpi = False  # simula mouse G em modo de perfis da memoria
         self.soc = 73
         self.charging = 0
+        self.sectors = {0x0000: G305_DIRECTORY.ljust(255, b"\xff"), 0x0001: G305_PROFILE, 0x0101: G305_PROFILE}
+        self._write = None
+        self.current_sector = 0x0001
         self.reset()
 
     # ---- simulacao ----
@@ -141,10 +158,37 @@ class FakeMouse:
                 self.rate_ms = p[0]
                 return []
         if fid == H.F_ONBOARD_PROFILES:
+            if fn == 0:
+                return [0x01, 0x03, 0x01, 0x01, 0x01, 0x06, 0x06, 0x00, 0xFF, 0x0A, 0x02]
             if fn == 2:
                 return [self.onboard]
             if fn == 1:
                 self.onboard = p[0]
+                return []
+            if fn == 3:
+                self.current_sector = (p[0] << 8) | p[1]
+                return []
+            if fn == 4:
+                return [self.current_sector >> 8, self.current_sector & 0xFF]
+            if fn == 5:
+                sec, off = (p[0] << 8) | p[1], (p[2] << 8) | p[3]
+                data = self.sectors[sec]
+                if off + 16 > len(data):
+                    raise ValueError("fora do setor")
+                return list(data[off:off + 16])
+            if fn == 6:
+                sec, n = (p[0] << 8) | p[1], (p[4] << 8) | p[5]
+                if sec >= 0x100 or sec not in self.sectors:
+                    raise ValueError("setor só leitura")
+                self._write = [sec, n, bytearray()]
+                return []
+            if fn == 7:
+                self._write[2] += bytes(p[:16])
+                return []
+            if fn == 8:
+                sec, n, buf = self._write
+                self.sectors[sec] = bytes(buf[:n])
+                self._write = None
                 return []
         raise KeyError(fid)
 

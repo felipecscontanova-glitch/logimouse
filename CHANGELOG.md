@@ -1,5 +1,23 @@
 # Histórico de versões
 
+## 2.0.0 (2026-11-13)
+
+- **Painel novo** em GTK 4 + libadwaita, tema escuro neon, com tela inicial de cartões (bateria em
+  anel, DPI, taxa, perfil, EQ) e seções por dispositivo. Logo e ícone novos. Sem GTK 4, abre o painel
+  antigo (Tkinter).
+- **Memória dos mouses G** (feature HID++ 0x8100): até 5 níveis de DPI, nível padrão, "segurar para DPI
+  baixo", taxa e a ação de cada botão, gravados no mouse com CRC e conferidos lendo de volta. Cópia do
+  perfil anterior em `~/.config/logimouse/backups/`. "Restaurar fábrica" copia o perfil original do mouse.
+- **Macros**: gravadas pelo teclado (teclas e esperas), rodam uma vez, enquanto segura ou liga/desliga.
+  O botão manda uma tecla reservada (F13..F24) e o ícone na barra digita a macro por um teclado virtual.
+- **Perfis** no computador e **troca automática por programa** (pelo ícone na barra).
+- **Teste do mouse**: último botão, cliques, duplos cliques, rolagem e movimento.
+- **Headset**: equalizador de 10 faixas desenhável com predefinições, surround virtual 7.1 (HRIR gerado
+  por um modelo de cabeça, ou um arquivo HeSuVi seu), microfone sem ruído por IA (RNNoise), ganho e EQ
+  da voz, retorno da voz, volume, teste de microfone. Tudo pelo PipeWire, num serviço do usuário.
+- Instalador: GTK 4/libadwaita, ícone, regra udev das macros (`71-logimouse-macros.rules`) e download
+  opcional do RNNoise. **Rode o `instalar.sh` de novo** depois de atualizar.
+
 ## 1.3.1 (2026-11-06)
 
 - Reconhece o receptor do **MCHOSE V9 Pro**, que usa o fabricante USB `291d` (produto `385d`), e não
