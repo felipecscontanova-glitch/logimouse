@@ -13,6 +13,7 @@ O receptor tambem manda sozinho outros reports no mesmo formato (um
 "estou vivo" e campos ainda nao identificados); so o campo 0x02 e lido.
 Fonte: driver do MCHOSE X9 no HeadsetControl (github.com/Sapd/HeadsetControl,
 PR #563), feito a partir de uma captura USB do app oficial "M HUB".
+Confirmado num V9 Pro real (receptor 291d:385d): 55 65 01 -> 55 65 32 02 (50%).
 
 Com o cabo de carga plugado o fone sai do 2.4 GHz, entao "carregando" nao
 aparece por este caminho.

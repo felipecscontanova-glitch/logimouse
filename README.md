@@ -57,8 +57,8 @@ Mouse: funciona com receptor **Unifying**, **Bolt** e **Lightspeed**, por **Blue
 O receptor 2.4 GHz dos headsets MCHOSE (chip C-Media; fabricante USB `3837` no X9 e `291d:385d` no
 V9 Pro) responde à pergunta
 `55 65 01` com `55 65 <bateria> 02`. O protocolo foi descoberto para o **MCHOSE X9** pelo projeto
-[HeadsetControl](https://github.com/Sapd/HeadsetControl) a partir do app oficial (M HUB) e o V9 / V9 Pro
-usam o mesmo M HUB. O LogiMouse só faz essa pergunta se o receptor tiver exatamente esse canal do
+[HeadsetControl](https://github.com/Sapd/HeadsetControl) a partir do app oficial (M HUB), e foi
+**confirmado num MCHOSE V9 Pro de verdade** (receptor `291d:385d` respondeu `55 65 32 02` = 50%). O LogiMouse só faz essa pergunta se o receptor tiver exatamente esse canal do
 fabricante (report `0x55`), e ignora os outros avisos que o receptor manda sozinho.
 
 - **Carregando** não aparece pelo receptor: com o cabo de carga plugado o fone sai do 2.4 GHz.
