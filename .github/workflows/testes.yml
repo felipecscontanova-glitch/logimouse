@@ -6,11 +6,16 @@ on:
 
 jobs:
   testes:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.10", "3.12", "3.13"]
+        python: ["3.10", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # o Python 3.9 (versao minima do app) nao existe para o Ubuntu 26.04 dos runners novos
+          - python: "3.9"
+            os: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
