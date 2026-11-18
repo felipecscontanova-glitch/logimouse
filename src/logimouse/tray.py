@@ -465,9 +465,11 @@ class AudioFollower:
 
     EVERY = 8.0
 
-    def __init__(self, follow=None):
+    def __init__(self, follow=None, fix_volume=None, on_volume=None):
         from . import audio as AU
         self.follow = follow or AU.follow_headset
+        self.fix_volume = fix_volume or AU.fix_hw_volume
+        self.on_volume = on_volume or (lambda done: None)
         self._stop = threading.Event()
 
     def stop(self):
@@ -478,6 +480,11 @@ class AudioFollower:
             try:
                 if self.follow():
                     log("som: equalizador/microfone reapontados para o fone")
+                done = self.fix_volume()
+                if done:
+                    log("som: volume interno do fone subiu para 100% (" +
+                        ", ".join(f"{c['name']},{c['index']} estava em {c['pct']}%" for c in done) + ")")
+                    self.on_volume(done)
             except Exception:  # noqa: BLE001 - nunca derruba a bandeja
                 log("som:\n" + traceback.format_exc())
 
@@ -594,7 +601,10 @@ class TrayApp:
             threading.Thread(target=self._update_loop, daemon=True).start()
             self.macros = M.MacroService(P.macros, log=log)
             threading.Thread(target=self.macros.run, daemon=True).start()
-            self.audio = AudioFollower()
+            self.audio = AudioFollower(on_volume=lambda done: GLib.idle_add(
+                _notify, "Volume do headset corrigido",
+                f"O volume interno do fone estava em {min(c['pct'] for c in done)}%. Subiu para 100% "
+                "e o volume do sistema foi para 40% para não estourar."))
             threading.Thread(target=self.audio.run, daemon=True).start()
         self.rules = ProfileSwitcher(self.monitor, on_switch=lambda dev, name: GLib.idle_add(
             _notify, "Perfil do mouse", f"{dev}: perfil “{name}”"))

@@ -256,6 +256,54 @@ class Audio(TempConfig):
             AU.apply = old
         self.assertEqual(len(calls), 1)
 
+    AMIXER_V9 = """Simple mixer control 'PCM',0
+  Capabilities: pvolume pswitch pswitch-joined
+  Playback channels: Front Left - Front Right
+  Limits: Playback 0 - 151
+  Mono:
+  Front Left: Playback 151 [100%] [-0.06dB] [on]
+  Front Right: Playback 151 [100%] [-0.06dB] [on]
+Simple mixer control 'PCM',1
+  Capabilities: pvolume pvolume-joined
+  Playback channels: Mono
+  Limits: Playback 0 - 151
+  Mono: Playback 44 [29%] [-20.13dB]
+Simple mixer control 'Mic',0
+  Capabilities: cvolume cvolume-joined cswitch cswitch-joined
+  Capture channels: Mono
+  Limits: Capture 0 - 151
+  Mono: Capture 151 [100%] [-0.06dB] [on]
+"""
+
+    def test_parse_amixer_of_real_v9_pro(self):
+        c = AU.parse_amixer(self.AMIXER_V9)
+        self.assertEqual([(x["name"], x["index"], x["pct"]) for x in c], [("PCM", 0, 100), ("PCM", 1, 29)])
+        self.assertAlmostEqual(c[1]["db"], -20.13)
+        # so o controle que o sistema nao usa (PCM,1)
+        self.assertEqual([(x["index"], x["pct"]) for x in AU.stuck_volumes(c)], [(1, 29)])
+
+    def test_fix_hw_volume_lowers_system_first(self):
+        import subprocess as sp
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            out = self.AMIXER_V9 if cmd[-1] == "scontents" else "Volume: 1.00\n" if cmd[1] == "get-volume" else ""
+            return sp.CompletedProcess(cmd, 0, out, "")
+        sink = dict(id=1, name="alsa_output.usb-MCHOSE", desc="MCHOSE V9 PRO", cls="Audio/Sink", vendor="0x291d",
+                    api="alsa", props={"alsa.card": 1})
+        old = AU.shutil.which
+        AU.shutil.which = lambda n: "/usr/bin/" + n
+        try:
+            done = AU.fix_hw_volume([sink], run=run)
+        finally:
+            AU.shutil.which = old
+        self.assertEqual([(c["index"], c["pct"]) for c in done], [(1, 29)])
+        i_low = calls.index(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.40"])
+        i_up = calls.index(["amixer", "-c", "1", "-q", "sset", "PCM,1", "100%"])
+        self.assertLess(i_low, i_up)  # baixa o sistema ANTES de subir o fone
+        self.assertNotIn(["amixer", "-c", "1", "-q", "sset", "PCM,0", "100%"], calls)  # o do sistema fica
+
     def test_settings_saved(self):
         AU.save_settings(preset="FPS", gains=AU.PRESETS["FPS"])
         self.assertEqual(AU.settings()["gains"], AU.PRESETS["FPS"])

@@ -1943,11 +1943,29 @@ class MainWindow(Adw.ApplicationWindow):
             c.append(lab("A saída de som do headset não apareceu no PipeWire (o receptor está na USB?).", "lm-muted", wrap=True))
         r, _ = switch_row("Usar como saída padrão", a["default_out"], lambda v: self.audio_change(default_out=v))
         c.append(r)
+        stuck = AU.stuck_volumes(s.get("hw") or [])
+        if stuck:
+            low = min(stuck, key=lambda x: x["pct"])
+            db = f" ({low['db']:.0f} dB)" if low.get("db") is not None else ""
+            c.append(lab(f"O volume interno do fone está em {low['pct']}%{db}: o som sai baixo mesmo com tudo "
+                         "no máximo.", "lm-warn", wrap=True))
+            c.append(button("Corrigir (sobe para 100% e baixa o sistema para 40%)", "lm-ghost", cb=self._fix_hw))
+        elif s.get("hw"):
+            c.append(lab("Volume interno do fone: 100%.", "lm-small"))
         row.append(c)
         body.append(row)
         if not s.get("pw"):
             body.append(card("PipeWire não encontrado", "Equalizador, surround e microfone sem ruído precisam do PipeWire.",
                              "dashed"))
+
+    def _fix_hw(self):
+        h = self.cur
+
+        def ok(done):
+            self.toast_msg("Volume interno do fone em 100%. Suba o volume do sistema aos poucos."
+                           if done else "Nada para corrigir.")
+            self.audio_worker.submit(lambda: load_headset(h, self.demo), self._reloaded)
+        self.audio_worker.submit(AU.fix_hw_volume, ok, lambda e: self.say(f"Volume: {e}"))
 
     def _preset_of(self, g):
         return next((n for n, v in AU.PRESETS.items() if v == list(g)), "Personalizado")
@@ -2177,6 +2195,8 @@ def load_headset(h, demo=False):
                 AU.save_settings(label=h.name)
         if src:
             s["micvol"] = AU.get_volume(src["id"])
+        card = AU.headset_card()
+        s["hw"] = AU.hw_volumes(card) if card else []
     return s
 
 

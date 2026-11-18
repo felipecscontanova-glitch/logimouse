@@ -1,5 +1,14 @@
 # Histórico de versões
 
+## 2.0.2 (2026-11-18)
+
+- Som baixo no V9 Pro mesmo com tudo no máximo: o receptor tem um segundo volume interno
+  (`PCM,1` no mixer ALSA) que o sistema não controla e que pode ficar parado baixo (visto em
+  29%, -20 dB). O ícone na barra agora sobe esse volume para 100% sozinho. Se o salto for grande,
+  baixa antes o volume do sistema para 40%, para não estourar no ouvido, e avisa.
+- Painel: em Headset › Som › Volume aparece o volume interno do fone e um botão "Corrigir"
+  quando ele está baixo.
+
 ## 2.0.1 (2026-11-18)
 
 - Corrige: o som do headset falhava quando o sistema trocava a saída do fone entre "Estéreo

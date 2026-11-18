@@ -20,6 +20,7 @@ import glob
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -448,6 +449,84 @@ def follow_headset(nodes=None):
 def service_running():
     r = _systemctl("is-active", SERVICE)
     return bool(r and r.stdout.strip() == "active")
+
+
+# --------------------------------------------------------------------------
+# Volume interno do fone (mixer ALSA do receptor)
+# --------------------------------------------------------------------------
+# O receptor do V9 Pro tem dois controles "PCM": o 0 o sistema usa como volume, o 1
+# ninguem mexe, e ja foi visto parado em 29% (-20 dB): som baixo com tudo no maximo.
+# O LogiMouse sobe os controles que o sistema nao usa (indice >= 1) para 100%.
+_CTRL = re.compile(r"^Simple mixer control '([^']+)',(\d+)")
+_PCT = re.compile(r"Playback (\d+) \[(\d+)%\](?: \[(-?[\d.]+)dB\])?")
+
+
+def parse_amixer(text):
+    """[{"name", "index", "pct", "db"}] dos controles de volume de saida."""
+    out, cur = [], None
+    for line in text.splitlines():
+        m = _CTRL.match(line)
+        if m:
+            cur = dict(name=m.group(1), index=int(m.group(2)), pct=None, db=None, playback=False)
+            out.append(cur)
+            continue
+        if cur is None:
+            continue
+        if "Capabilities:" in line and "pvolume" in line:
+            cur["playback"] = True
+        m = _PCT.search(line)
+        if m and cur["playback"] and cur["pct"] is None:
+            cur["pct"] = int(m.group(2))
+            cur["db"] = float(m.group(3)) if m.group(3) else None
+    return [c for c in out if c["playback"] and c["pct"] is not None]
+
+
+def headset_card(nodes=None):
+    sink, _ = find_headset(nodes)
+    if not sink:
+        return None
+    card = sink["props"].get("alsa.card", sink["props"].get("api.alsa.pcm.card"))
+    return str(card) if card is not None and str(card).isdigit() else None
+
+
+def hw_volumes(card, run=None):
+    run = run or _run
+    r = run(["amixer", "-c", str(card), "scontents"])
+    return parse_amixer(r.stdout) if r and r.returncode == 0 else []
+
+
+def stuck_volumes(controls):
+    """Controles que o sistema nao usa (PCM com indice >= 1) e estao abaixo de 100%."""
+    return [c for c in controls if c["name"] == "PCM" and c["index"] >= 1 and c["pct"] < 100]
+
+
+def fix_hw_volume(nodes=None, run=None):
+    """Sobe o volume interno esquecido. Se o salto for grande, baixa antes o volume do
+    sistema para nao estourar no ouvido. Devolve a lista de controles ajustados."""
+    if config.DRY_RUN or not shutil.which("amixer"):
+        return []
+    run = run or _run
+    card = headset_card(nodes)
+    if card is None:
+        return []
+    stuck = stuck_volumes(hw_volumes(card, run))
+    if not stuck:
+        return []
+    jump = max((-(c["db"] or 0) for c in stuck), default=0)
+    if jump > 6:
+        r = run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
+        try:
+            cur = float(r.stdout.split()[1]) if r and r.returncode == 0 else None
+        except (IndexError, ValueError):
+            cur = None
+        if cur is None or cur > 0.4:
+            run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "0.40"])
+    done = []
+    for c in stuck:
+        r = run(["amixer", "-c", str(card), "-q", "sset", f"{c['name']},{c['index']}", "100%"])
+        if r and r.returncode == 0:
+            done.append(c)
+    return done
 
 
 # --------------------------------------------------------------------------
