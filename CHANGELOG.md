@@ -1,5 +1,18 @@
 # Histórico de versões
 
+## 2.0.1 (2026-11-18)
+
+- Corrige: o som do headset falhava quando o sistema trocava a saída do fone entre "Estéreo
+  analógico" e "Estéreo digital (IEC958)" (são o mesmo fone com nomes diferentes). O equalizador
+  ficava apontando para a saída antiga e caía na saída padrão, que podia ser ele mesmo.
+  - Os filtros do LogiMouse não caem mais na saída padrão quando o fone some (`node.dont-fallback`).
+  - O ícone na barra percebe a troca e reaponta equalizador e microfone para o fone.
+  - A procura pelo fone ignora os próprios filtros do LogiMouse ("MCHOSE V9 PRO · Equalizador").
+- Bateria do V9 Pro com receptor de firmware novo (0013) e fone de firmware antigo (0002): a
+  resposta vem com o campo `00` em vez de `02` e agora é aceita (só como resposta à pergunta da
+  bateria). Relato de um usuário no HeadsetControl (PR #624); a correção definitiva é atualizar o
+  firmware do fone pela ferramenta web da MCHOSE.
+
 ## 2.0.0 (2026-11-13)
 
 - **Painel novo** em GTK 4 + libadwaita, tema escuro neon, com tela inicial de cartões (bateria em

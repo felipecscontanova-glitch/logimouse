@@ -56,6 +56,9 @@ EQ_SINK = "logimouse_eq"
 SURROUND_SINK = "logimouse_surround"
 MIC_SOURCE = "logimouse_mic"
 SERVICE = "logimouse-audio.service"
+# Se o alvo (o fone) sumir, o filtro NAO vai para a saida padrao: ela pode ser o proprio
+# equalizador, e o som entraria em loop. O LogiMouse reaponta o filtro (follow_headset).
+NOFALLBACK = "node.dont-fallback = true"
 
 
 def settings():
@@ -109,6 +112,10 @@ def pw_nodes():
 
 
 def _is_headset(n, hints=("mchose", "c-media", "v9 pro", "x9")):
+    if n["name"].startswith("logimouse_") or n["props"].get("node.virtual") in (True, "true"):
+        return False  # os filtros do proprio LogiMouse ("MCHOSE V9 PRO · Equalizador") nao sao o fone
+    if n["api"] and n["api"] not in ("alsa", "bluez5"):
+        return False
     text = f"{n['name']} {n['desc']} {n['props'].get('alsa.card_name', '')} {n['props'].get('device.product.name', '')}".lower()
     vid = n["vendor"].lower().replace("0x", "")
     return vid in ("291d", "3837") or any(h in text for h in hints)
@@ -241,13 +248,16 @@ def build_conf(s, hrir=None, rnnoise=None):
     mods = []
     sink_target = f'target.object = {_q(s["sink"])}' if s.get("sink") else ""
     src_target = f'target.object = {_q(s["source"])}' if s.get("source") else ""
+    # sem fallback so quando ha um alvo; sem alvo conhecido, a saida padrao e o unico caminho
+    sink_nf = NOFALLBACK if sink_target else ""
+    src_nf = NOFALLBACK if src_target else ""
 
     eq_active = s.get("eq_on") and any(s["gains"])
     if eq_active:
         nodes, links, i, o = _eq_nodes(s["gains"])
         mods.append(_module(f"{label} · Equalizador", nodes, links, _q(i), _q(o),
                             f'node.name = "{EQ_SINK}" media.class = Audio/Sink',
-                            f'node.name = "{EQ_SINK}_out" node.passive = true {sink_target}',
+                            f'node.name = "{EQ_SINK}_out" node.passive = true {sink_nf} {sink_target}',
                             channels=["FL", "FR"]))
     if s.get("surround") and hrir:
         names = ["FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR"]
@@ -270,12 +280,13 @@ def build_conf(s, hrir=None, rnnoise=None):
             links.append(f'{{ output = "{nm}:Out" input = "mix{ear}:In 8" }}')
         nodes += ["{ type = builtin label = mixer name = mixL }", "{ type = builtin label = mixer name = mixR }"]
         target = f'target.object = "{EQ_SINK}"' if eq_active else sink_target
+        sur_nf = NOFALLBACK if target else ""
         mods.append(_module(f"{label} · Surround 7.1", nodes, links,
                             " ".join(_q(f"c{n}:In") for n in names), '"mixL:Out" "mixR:Out"',
                             f'node.name = "{SURROUND_SINK}" media.class = Audio/Sink audio.channels = 8 '
                             'audio.position = [ FL FR FC LFE RL RR SL SR ]',
                             f'node.name = "{SURROUND_SINK}_out" node.passive = true audio.channels = 2 '
-                            f'audio.position = [ FL FR ] {target}'))
+                            f'audio.position = [ FL FR ] {sur_nf} {target}'))
     voice = VOICE.get(s.get("voice"), [])
     nr = bool(s.get("nr") and rnnoise)
     if nr or voice or s.get("mic_gain"):
@@ -298,14 +309,14 @@ def build_conf(s, hrir=None, rnnoise=None):
         first = chain[0]
         mods.append(_module(f"{label} · " + ("sem ruído" if nr else "voz"), nodes, links,
                             _q(f"{first}:In"), '"gain:Out"',
-                            f'node.name = "{MIC_SOURCE}_in" node.passive = true audio.rate = 48000 {src_target}',
+                            f'node.name = "{MIC_SOURCE}_in" node.passive = true audio.rate = 48000 {src_nf} {src_target}',
                             f'node.name = "{MIC_SOURCE}" media.class = Audio/Source audio.rate = 48000',
                             channels=["MONO"]))
     if s.get("sidetone") and s.get("source") and s.get("sink"):
         mods.append("  { name = libpipewire-module-loopback\n    args = {\n"
                     f"      node.description = {_q(label + ' · retorno da voz')}\n"
-                    f"      capture.props = {{ node.name = \"logimouse_sidetone_in\" {src_target} node.passive = true }}\n"
-                    f"      playback.props = {{ node.name = \"logimouse_sidetone_out\" {sink_target} }}\n    }}\n  }}")
+                    f"      capture.props = {{ node.name = \"logimouse_sidetone_in\" {src_target} {src_nf} node.passive = true }}\n"
+                    f"      playback.props = {{ node.name = \"logimouse_sidetone_out\" {sink_target} {sink_nf} }}\n    }}\n  }}")
     if not mods:
         return None
     head = ("# Gerado pelo LogiMouse. Mude pelo painel: este arquivo e reescrito.\n"
@@ -417,6 +428,21 @@ def _set_defaults(s):
             n = _wait_node(s["source"], 1.0)
         if n:
             _run(["wpctl", "set-default", str(n["id"])])
+
+
+def follow_headset(nodes=None):
+    """O fone mudou de nome (ex.: saida "Estereo analogico" <-> "Estereo digital (IEC958)",
+    que sao o mesmo fone)? Reaponta o equalizador/microfone para ele. Devolve True se reaplicou."""
+    if config.DRY_RUN or not os.path.exists(conf_path()) or not os.path.exists(unit_path()):
+        return False
+    s = settings()
+    sink, src = find_headset(nodes)
+    if sink is None and src is None:
+        return False  # fone desligado ou receptor fora da USB: espera ele voltar
+    if (sink is None or sink["name"] == s.get("sink")) and (src is None or src["name"] == s.get("source")):
+        return False
+    apply()
+    return True
 
 
 def service_running():

@@ -231,7 +231,8 @@ MCHOSE_DESCRIPTOR = bytes([
 class FakeMchose:
     """Receptor 2.4 GHz de um headset MCHOSE, com o 'ruido' que o de verdade manda."""
 
-    def __init__(self, battery=58):
+    def __init__(self, battery=58, field=0x02):
+        self.field = field  # 0x00: receptor novo com fone de firmware antigo
         self.lock = threading.RLock()
         self.out = []
         self._r, self._w = os.pipe()
@@ -253,7 +254,7 @@ class FakeMchose:
         if m[:3] == bytes([0x55, 0x65, 0x01]):
             self._push([0x55, 0x00, 0x01])               # "estou vivo"
             self._push([0x55, 0x65, 0x37, 0x05])         # outro campo, nao e bateria
-            self._push([0x55, 0x65, self.battery if self.online else 0, 0x02])
+            self._push([0x55, 0x65, self.battery if self.online else 0, self.field])
 
     def battery_event(self, pct):
         self.battery = pct

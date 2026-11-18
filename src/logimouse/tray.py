@@ -459,6 +459,29 @@ class HeadsetWatcher:
 # --------------------------------------------------------------------------
 # Parte visual
 # --------------------------------------------------------------------------
+class AudioFollower:
+    """Mantem o equalizador e o microfone do LogiMouse ligados no fone, mesmo quando o
+    sistema troca a saida dele (analogico/digital) ou o receptor e recolocado."""
+
+    EVERY = 8.0
+
+    def __init__(self, follow=None):
+        from . import audio as AU
+        self.follow = follow or AU.follow_headset
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        while not self._stop.wait(self.EVERY):
+            try:
+                if self.follow():
+                    log("som: equalizador/microfone reapontados para o fone")
+            except Exception:  # noqa: BLE001 - nunca derruba a bandeja
+                log("som:\n" + traceback.format_exc())
+
+
 class ProfileSwitcher:
     """Grava no mouse o perfil do programa aberto (regras feitas no painel)."""
 
@@ -571,6 +594,8 @@ class TrayApp:
             threading.Thread(target=self._update_loop, daemon=True).start()
             self.macros = M.MacroService(P.macros, log=log)
             threading.Thread(target=self.macros.run, daemon=True).start()
+            self.audio = AudioFollower()
+            threading.Thread(target=self.audio.run, daemon=True).start()
         self.rules = ProfileSwitcher(self.monitor, on_switch=lambda dev, name: GLib.idle_add(
             _notify, "Perfil do mouse", f"{dev}: perfil “{name}”"))
         threading.Thread(target=self.rules.run, daemon=True).start()
@@ -764,6 +789,8 @@ class TrayApp:
 
     def quit(self, *_):
         self.rules.stop()
+        if getattr(self, "audio", None):
+            self.audio.stop()
         if getattr(self, "macros", None):
             self.macros.stop.set()
         self.monitor.stop()

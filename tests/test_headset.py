@@ -120,6 +120,25 @@ class MchoseTests(unittest.TestCase):
         self.assertIsNone(h.parse(bytes([0x55, 0x65, 200, 0x02])))
         self.assertIsNone(h.parse(bytes([0x11, 0x65, 41, 0x02])))
         self.assertIsNone(h.parse(b""))
+        # campo 0x00 (fone com firmware antigo): so como resposta a pergunta
+        self.assertIsNone(h.parse(bytes([0x55, 0x65, 41, 0x00])))
+        self.assertEqual(h.parse(bytes([0x55, 0x65, 41, 0x00]), answer=True)["percent"], 41)
+
+    def test_old_headset_firmware_answers_with_field_00(self):
+        fake = D.FakeMchose(47, field=0x00)
+        h = HS.MchoseHeadset(fake, "x")
+        self.assertEqual(h.battery()["percent"], 47)
+
+    def test_field_02_wins_over_00(self):
+        fake = D.FakeMchose(47, field=0x00)
+        h = HS.MchoseHeadset(fake, "x")
+        write = fake.write
+
+        def both(m):
+            write(m)
+            fake._push([0x55, 0x65, 63, 0x02])
+        fake.write = both
+        self.assertEqual(h.battery()["percent"], 63)
 
     def test_model_names(self):
         self.assertEqual(HS.model_name(dict(name="C-Media Electronics Inc MCHOSE V9 PRO", vid=0x291D,

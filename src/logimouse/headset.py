@@ -41,6 +41,10 @@ REPORT_ID = 0x55
 MSG_VALUE = 0x65
 ASK_BATTERY = 0x01
 FIELD_BATTERY = 0x02
+# Receptor com firmware novo (0013) + fone com firmware antigo (0002) responde a pergunta
+# com o campo 0x00 em vez de 0x02 (relato de um V9 Pro real no HeadsetControl, PR #624).
+# So vale como RESPOSTA a nossa pergunta, nunca num aviso espontaneo do receptor.
+FIELD_BATTERY_OLD_HEADSET = 0x00
 DEFAULT_LEN = 64  # bytes escritos, contando o report id (igual ao app oficial)
 
 
@@ -220,9 +224,13 @@ class MchoseHeadset:
         return dict(percent=pct, level=None, status="Ligado", charging=False, voltage=None,
                     source="MCHOSE 2.4 GHz (report 0x55)")
 
-    def parse(self, pkt):
-        """Bateria (dict) se o pacote for uma resposta/aviso de bateria valido, senao None."""
-        if not pkt or len(pkt) < 4 or pkt[0] != REPORT_ID or pkt[1] != MSG_VALUE or pkt[3] != FIELD_BATTERY:
+    def parse(self, pkt, answer=False):
+        """Bateria (dict) se o pacote for uma resposta/aviso de bateria valido, senao None.
+
+        answer=True: o pacote chegou logo depois da nossa pergunta, entao o campo 0x00
+        (fone com firmware antigo) tambem vale."""
+        fields = (FIELD_BATTERY, FIELD_BATTERY_OLD_HEADSET) if answer else (FIELD_BATTERY,)
+        if not pkt or len(pkt) < 4 or pkt[0] != REPORT_ID or pkt[1] != MSG_VALUE or pkt[3] not in fields:
             return None
         pct = pkt[2]
         if pct > 100:
@@ -236,21 +244,32 @@ class MchoseHeadset:
         except OSError as e:
             raise HeadsetError(f"não deu para falar com o receptor ({e.strerror or e})") from e
         deadline = time.monotonic() + timeout
+        fallback = None  # resposta com o campo 0x00: usada se nao vier uma com 0x02 logo em seguida
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
+                if fallback is not None:
+                    return self._accept(fallback)
                 raise HeadsetTimeout("o fone não respondeu (desligado ou fora de alcance?)")
             try:
                 pkt = self.t.read(left)
             except OSError as e:
                 raise HeadsetError(f"o receptor saiu da USB ({e.strerror or e})") from e
-            b = self.parse(pkt)
-            if b is not None:
-                if b["percent"] == 0:
-                    # o receptor responde 0 quando nao ha fone conectado a ele
-                    raise HeadsetTimeout("sem leitura de bateria (fone desligado?)")
-                self.last_battery = b
-                return b
+            b = self.parse(pkt, answer=True)
+            if b is None:
+                continue
+            if pkt[3] == FIELD_BATTERY:
+                return self._accept(b)
+            if fallback is None:
+                fallback = b
+                deadline = min(deadline, time.monotonic() + 0.3)
+
+    def _accept(self, b):
+        if b["percent"] == 0:
+            # o receptor responde 0 quando nao ha fone conectado a ele
+            raise HeadsetTimeout("sem leitura de bateria (fone desligado?)")
+        self.last_battery = b
+        return b
 
     def read_battery(self):
         return self.battery()
@@ -443,7 +462,9 @@ def diagnose(listen=10.0, out=print):
                     seen += 1
                     mark = ""
                     if len(pkt) >= 4 and pkt[0] == REPORT_ID and pkt[1] == MSG_VALUE:
-                        mark = f"   <- campo {pkt[3]:#04x} = {pkt[2]}" + ("  (BATERIA)" if pkt[3] == FIELD_BATTERY else "")
+                        mark = f"   <- campo {pkt[3]:#04x} = {pkt[2]}" + ("  (BATERIA)" if pkt[3] == FIELD_BATTERY else
+                                                                     "  (bateria? fone com firmware antigo)"
+                                                                     if pkt[3] == FIELD_BATTERY_OLD_HEADSET else "")
                     out(f"  < {_hex(pkt[:24])}{' ...' if len(pkt) > 24 else ''}{mark}")
             if not seen:
                 out("  (nada recebido)")

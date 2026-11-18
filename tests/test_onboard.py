@@ -216,6 +216,45 @@ class Audio(TempConfig):
                       vendor="0x291d", api="alsa", props={})]
         sink, src = AU.find_headset(nodes)
         self.assertEqual((sink["id"], src["id"]), (2, 3))
+        # os filtros do proprio LogiMouse tem "MCHOSE" no nome, mas nao sao o fone
+        # (antes, o equalizador podia ser apontado para ele mesmo)
+        own = [dict(id=9, name="logimouse_eq", desc="MCHOSE V9 PRO · Equalizador", cls="Audio/Sink",
+                    vendor="", api="", props={}),
+               dict(id=8, name="logimouse_mic", desc="MCHOSE V9 PRO · sem ruído", cls="Audio/Source",
+                    vendor="", api="", props={})]
+        sink, src = AU.find_headset(own + nodes)
+        self.assertEqual((sink["id"], src["id"]), (2, 3))
+        self.assertEqual(AU.find_headset(own), (None, None))
+
+    def test_no_fallback_only_with_target(self):
+        # sem o fone, o equalizador nao pode cair na saida padrao (que pode ser ele mesmo)
+        s = dict(AU.DEFAULTS, gains=AU.PRESETS["FPS"], sink="alsa_output.x.analog-stereo")
+        self.assertIn("node.dont-fallback = true", AU.build_conf(s))
+        s["sink"] = ""
+        self.assertNotIn("node.dont-fallback", AU.build_conf(s))
+
+    def test_follow_headset_when_output_mode_changes(self):
+        analog = "alsa_output.usb-C-Media_MCHOSE_V9_PRO-01.analog-stereo"
+        digital = "alsa_output.usb-C-Media_MCHOSE_V9_PRO-01.iec958-stereo"
+        src = "alsa_input.usb-C-Media_MCHOSE_V9_PRO-01.mono-fallback"
+        AU.save_settings(gains=AU.PRESETS["FPS"], sink=analog, source=src)
+        for path in (AU.conf_path(), AU.unit_path()):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "w").close()
+
+        def nodes(sink):
+            return [dict(id=1, name=sink, desc="MCHOSE V9 PRO", cls="Audio/Sink", vendor="0x291d", api="alsa", props={}),
+                    dict(id=2, name=src, desc="MCHOSE V9 PRO", cls="Audio/Source", vendor="0x291d", api="alsa", props={})]
+        calls = []
+        old = AU.apply
+        AU.apply = lambda *a, **k: calls.append(1)
+        try:
+            self.assertFalse(AU.follow_headset(nodes(analog)))   # nada mudou
+            self.assertFalse(AU.follow_headset([]))              # fone fora: espera
+            self.assertTrue(AU.follow_headset(nodes(digital)))   # analogico -> digital
+        finally:
+            AU.apply = old
+        self.assertEqual(len(calls), 1)
 
     def test_settings_saved(self):
         AU.save_settings(preset="FPS", gains=AU.PRESETS["FPS"])
