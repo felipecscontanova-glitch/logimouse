@@ -34,7 +34,8 @@ def runtime_dir():
 DRY_RUN = False
 _memory = None
 
-DEFAULTS = {"reapply": True, "notify_low": True, "auto_update": True, "last_update_check": 0, "devices": {}}
+DEFAULTS = {"reapply": True, "notify_low": True, "auto_update": True, "last_update_check": 0, "devices": {},
+            "lights_off": False}
 
 
 def load():
@@ -121,6 +122,15 @@ def forget(device_name):
 
 def device_settings(device_name):
     return dict(load()["devices"].get(device_name) or {})
+
+
+def settings_to_apply(device_name):
+    """O que reaplicar quando o dispositivo religa: os ajustes dele e, com a opcao
+    "Desligar todas as luzes", as luzes apagadas (vale para qualquer dispositivo)."""
+    s = device_settings(device_name)
+    if get_option("lights_off"):
+        s["leds"] = "off"
+    return s
 
 
 # --------------------------------------------------------------------------

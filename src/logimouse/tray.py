@@ -193,7 +193,7 @@ class Monitor:
         i["online"] = True
         force = i.pop("force", False)
         if force or ((reconnect or not was_online) and config.get_option("reapply")):
-            saved = config.device_settings(dev.name)
+            saved = config.settings_to_apply(dev.name)
             if saved:
                 done, failed = H.apply_settings(dev, saved)
                 i["last_apply"] = dict(at=time.time(), done=done, failed=failed)

@@ -1,5 +1,14 @@
 # Histórico de versões
 
+## 2.2.0 (2026-11-25)
+
+- **Luzes também nos mouses**: a página "Luzes" aparece em qualquer dispositivo Logitech que
+  informe zonas de luz (HID++ 0x8070), não só nos fones. Alguns mouses, como o G305, informam
+  uma zona mesmo sem ter LED visível.
+- **"Desligar todas as luzes"** nas opções (engrenagem): apaga as luzes de todos os mouses e fones
+  na hora e o ícone na barra as apaga de novo sempre que um deles religa.
+- Nomes das zonas de luz mais genéricos ("Principal", "Logo", "Lado esquerdo"...).
+
 ## 2.1.0 (2026-11-25)
 
 - **Qualquer dispositivo aparece sozinho**, pelo receptor ou por Bluetooth:

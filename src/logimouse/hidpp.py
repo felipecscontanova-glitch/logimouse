@@ -427,7 +427,8 @@ class Device:
 
     # luzes (0x8070): efeitos por zona
     LED_EFFECTS = {0x0000: "Desligada", 0x0001: "Cor fixa", 0x0003: "Ciclo de cores", 0x000A: "Respirar"}
-    LED_ZONES = {0x0001: "Faixa", 0x0002: "Logo"}
+    LED_ZONES = {0x0001: "Principal", 0x0002: "Logo", 0x0003: "Lado esquerdo", 0x0004: "Lado direito",
+                 0x0005: "Todas", 0x0006: "Faixa", 0x0007: "Teclas"}
 
     def led_zones(self):
         """[dict(zone, name, effects=[(indice, id, nome)])]."""
@@ -443,6 +444,17 @@ class Device:
                     effects.append((e, eid, self.LED_EFFECTS[eid]))
             out.append(dict(zone=z, name=self.LED_ZONES.get(loc, f"Zona {z + 1}"), effects=effects))
         return out
+
+    def leds_off(self):
+        """Apaga todas as zonas que tem o efeito "desligada". Devolve quantas apagou."""
+        n = 0
+        for z in self.led_zones():
+            if any(eid == 0x0000 for _, eid, _ in z["effects"]):
+                self.set_led(z["zone"], 0x0000)
+                n += 1
+        if not n:
+            raise NotSupported("sem luzes para apagar")
+        return n
 
     def set_led(self, zone, effect_id, color=(0xA8, 0x55, 0xF7), period=4000):
         """Aplica um efeito numa zona: 0 desligada, 1 cor fixa, 0x0A respirar, 3 ciclo."""
@@ -700,6 +712,7 @@ def read_all(dev):
     safe("smartshift", dev.smartshift)
     safe("hires", dev.hires_wheel)
     safe("host_mode", dev.host_mode)
+    safe("leds", dev.led_zones)
     return s
 
 
@@ -716,8 +729,9 @@ def apply_settings(dev, saved):
         ("hires", "alta resolução", lambda v: dev.set_hires_wheel(hires=bool(v))),
         ("invert", "inverter rolagem", lambda v: dev.set_hires_wheel(invert=bool(v))),
         ("sidetone", "retorno da voz", lambda v: dev.set_sidetone(int(v))),
-        ("leds", "luzes", lambda v: [dev.set_led(int(z), int(x["effect"]), x.get("color", (0, 0, 0)),
-                                                 x.get("period", 4000)) for z, x in v.items()]),
+        ("leds", "luzes", lambda v: dev.leds_off() if v == "off" else [
+            dev.set_led(int(z), int(x["effect"]), x.get("color", (0, 0, 0)), x.get("period", 4000))
+            for z, x in v.items()]),
     ]
     for key, label, fn in steps:
         if key not in saved or saved[key] is None:

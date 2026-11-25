@@ -189,7 +189,7 @@ class LogitechHeadset(TempConfig):
         self.assertEqual(s["battery"]["voltage"], 3880)
         self.assertEqual(s["eq_info"]["freqs"], [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
         self.assertEqual(s["eq"], [-4, -4, -3, -2, 0, 1, 0, 0, -2, -3])
-        self.assertEqual([z["name"] for z in s["leds"]], ["Logo", "Faixa"])
+        self.assertEqual([z["name"] for z in s["leds"]], ["Logo", "Principal"])
         self.assertIsNone(s["dpi"])  # chaves de mouse vazias (o --cli nao quebra)
 
     def test_eq_sidetone_and_lights(self):
@@ -208,6 +208,26 @@ class LogitechHeadset(TempConfig):
         self.assertEqual((done, failed), (["retorno da voz", "luzes"], []))
         self.assertEqual(D.shared_logi_headset().side, 30)
         self.assertEqual(D.shared_logi_headset().leds[0][0], 0)
+
+
+class LightsOff(TempConfig):
+    def test_option_turns_off_every_device_on_reconnect(self):
+        from logimouse import hidpp as H
+        D._shared_logi_headset = None
+        devs, _ = D.discover_demo()
+        config.set_option("lights_off", True)
+        for d in devs:
+            saved = config.settings_to_apply(d.name)
+            self.assertEqual(saved["leds"], "off")
+            done, failed = H.apply_settings(d, saved)
+            self.assertIn("luzes", done)
+        self.assertEqual(D.shared_mouse().mouse_leds[0][0], 0)
+        self.assertEqual({z: v[0] for z, v in D.shared_logi_headset().leds.items()}, {0: 0, 1: 0})
+
+    def test_option_off_keeps_saved_effects(self):
+        config.set_option("lights_off", False)
+        config.remember("x", leds={"0": {"effect": 1, "color": [1, 2, 3]}})
+        self.assertEqual(config.settings_to_apply("x")["leds"]["0"]["effect"], 1)
 
 
 class AnyDevice(unittest.TestCase):

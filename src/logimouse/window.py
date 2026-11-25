@@ -638,11 +638,40 @@ class MainWindow(Adw.ApplicationWindow):
         r, _ = switch_row("Avisar com bateria baixa", config.get_option("notify_low"),
                           lambda v: config.set_option("notify_low", v))
         box.append(r)
+        r, _ = switch_row("Desligar todas as luzes", config.get_option("lights_off"), self._lights_off,
+                          "Mouses e fones, e continuam apagadas quando eles religam")
+        box.append(r)
         box.append(button("Procurar atualização agora", "lm-ghost", cb=self._check_update))
         box.append(lab(f"{APP_NAME} {__version__}", "lm-small"))
         pop.set_child(box)
         mb.set_popover(pop)
         return mb
+
+    def _lights_off(self, on):
+        config.set_option("lights_off", on)
+        if not on:
+            self.say("Luzes liberadas: escolha o efeito de cada dispositivo em “Luzes”.")
+            if self.cur is not None and self.section == "lights":
+                self.refresh_section()
+            return
+        devs = [d for d in self.mice if self.states.get(id(d), {}).get("leds")]
+
+        def job():
+            done = []
+            for d in devs:
+                try:
+                    d.leds_off()
+                    done.append(d.name)
+                except (*H.DEVICE_ERRORS, ValueError):
+                    pass
+            return done
+
+        def ok(done):
+            self.toast_msg("Luzes apagadas: " + ", ".join(done) if done else
+                           "Nenhum dispositivo com luzes respondeu agora; elas apagam quando ele religar.")
+            if self.cur is not None and self.section == "lights":
+                self.refresh_section()
+        self.worker.submit(job, ok)
 
     def _autostart(self, on):
         if self.demo:
@@ -921,6 +950,8 @@ class MainWindow(Adw.ApplicationWindow):
                     ("test", "Teste")]
         else:
             secs = [("perf", "Desempenho"), ("test", "Teste")]
+        if d.ui == "mouse" and s.get("leds"):
+            secs.insert(len(secs) - 1, ("lights", "Luzes"))
         if not keep_section or self.section not in dict(secs):
             self.section = secs[0][0]
         self.secs = secs
@@ -1952,7 +1983,13 @@ class MainWindow(Adw.ApplicationWindow):
         if not zones:
             body.append(card("Este fone não tem luzes controláveis.", None, "dashed"))
             return
+        if config.get_option("lights_off"):
+            body.append(card("Todas as luzes estão desligadas",
+                             "A opção “Desligar todas as luzes” (engrenagem) está ligada: as luzes apagam de novo "
+                             "quando o dispositivo religa. Desligue a opção para escolher um efeito.", "dashed"))
         saved = config.device_settings(d.name).get("leds") or {}
+        if not isinstance(saved, dict):
+            saved = {}
         self.led_state = {}
         for z in zones:
             cur = saved.get(str(z["zone"])) or {}
@@ -1985,12 +2022,14 @@ class MainWindow(Adw.ApplicationWindow):
             c.append(button("Aplicar", "lm-primary", cb=lambda zone=z["zone"]: self._led_apply(zone)))
             body.append(c)
         body.append(lab("A velocidade vale para “Respirar” e “Ciclo de cores”. O LogiMouse reaplica as luzes quando o "
-                        "fone religa.", "lm-small", wrap=True))
+                        "dispositivo religa. Alguns mouses (como o G305) informam uma zona de luz sem ter LED visível.",
+                        "lm-small", wrap=True))
 
     def _led_apply(self, zone):
         d = self.cur
         st = dict(self.led_state[zone])
-        saved = dict(config.device_settings(d.name).get("leds") or {})
+        saved = config.device_settings(d.name).get("leds") or {}
+        saved = dict(saved) if isinstance(saved, dict) else {}
         saved[str(zone)] = dict(effect=st["effect"], color=list(st["color"]), period=st["period"])
         self._apply(lambda: d.set_led(zone, st["effect"], st["color"], st["period"]), "Luzes", {"leds": saved})
 

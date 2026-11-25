@@ -27,6 +27,8 @@ programas da Logitech e sem nada rodando como root.
 
 - **Fones Logitech** como o G935 aparecem sozinhos: bateria, retorno da voz, equalizador gravado
   dentro do fone e luzes.
+- **Luzes** de mouses e fones Logitech, com a opção **"Desligar todas as luzes"** (engrenagem),
+  que mantém tudo apagado mesmo quando eles religam.
 - **Qualquer aparelho** pelo receptor ou por Bluetooth que informe bateria ao sistema (controles,
   teclados, fones de outras marcas) ganha um cartão com a bateria e o aviso de bateria baixa.
 

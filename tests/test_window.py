@@ -97,6 +97,16 @@ class NewPanel(unittest.TestCase):
         w._leq_save()
         self.pump(lambda: D.shared_logi_headset().gains == [-4, -3, -2, 0, 1, 3, 5, 5, 3, 1])
 
+    def test_mouse_lights_and_switch_all_off(self):
+        w = self.win
+        w.open_device(w.mice[0])
+        self.assertIn("lights", dict(w.secs))
+        w.show_section("lights")
+        w._lights_off(True)
+        self.pump(lambda: D.shared_mouse().mouse_leds[0][0] == 0
+                  and all(v[0] == 0 for v in D.shared_logi_headset().leds.values()))
+        self.assertTrue(config.get_option("lights_off"))
+
     def test_refuses_profile_without_left_click(self):
         w = self.win
         w.open_device(w.mice[0])

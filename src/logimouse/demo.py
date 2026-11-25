@@ -26,7 +26,8 @@ class FakeMouse:
 
     FEATURES = [H.F_ROOT, 0x0001, H.F_DEVICE_NAME, H.F_UNIFIED_BATTERY, H.F_WIRELESS_STATUS,
                 H.F_SMART_SHIFT, H.F_HIRES_WHEEL, H.F_ADJUSTABLE_DPI, H.F_REPORT_RATE,
-                H.F_ONBOARD_PROFILES]
+                H.F_ONBOARD_PROFILES, H.F_LED_EFFECTS]
+    LED_EFFECTS = [0x0000, 0x0001, 0x0003, 0x000A]
     DEFAULTS = dict(dpi=1000, ss=[2, 12], wheel=0x02, rate_ms=8, onboard=0x01)
 
     def __init__(self, name="MX Master 3S (demo)", index=1):
@@ -44,6 +45,7 @@ class FakeMouse:
         self.sectors = {0x0000: G305_DIRECTORY.ljust(255, b"\xff"), 0x0001: G305_PROFILE, 0x0101: G305_PROFILE}
         self._write = None
         self.current_sector = 0x0001
+        self.mouse_leds = {0: (0x0003, (0, 0, 0))}  # ciclo de cores, como sai de fabrica
         self.reset()
 
     # ---- simulacao ----
@@ -156,6 +158,17 @@ class FakeMouse:
                 return [self.rate_ms]
             if fn == 2:
                 self.rate_ms = p[0]
+                return []
+        if fid == H.F_LED_EFFECTS:
+            if fn == 0:
+                return [1, 0, 1]
+            if fn == 1:
+                return [p[0], 0, 1, len(self.LED_EFFECTS)]
+            if fn == 2:
+                e = self.LED_EFFECTS[p[1]]
+                return [p[0], p[1], e >> 8, e & 0xFF]
+            if fn == 3:
+                self.mouse_leds[p[0]] = (self.LED_EFFECTS[p[1]], tuple(p[2:5]))
                 return []
         if fid == H.F_ONBOARD_PROFILES:
             if fn == 0:

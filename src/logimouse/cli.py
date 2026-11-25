@@ -113,7 +113,7 @@ def run_reapply():
     for p in problems:
         print("!", p)
     for d in devices:
-        saved = config.device_settings(d.name)
+        saved = config.settings_to_apply(d.name)
         if not saved:
             print(f"{d.name}: nenhum ajuste salvo")
             continue
