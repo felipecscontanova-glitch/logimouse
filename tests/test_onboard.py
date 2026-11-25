@@ -192,6 +192,24 @@ class LogitechHeadset(TempConfig):
         self.assertEqual([z["name"] for z in s["leds"]], ["Logo", "Principal"])
         self.assertIsNone(s["dpi"])  # chaves de mouse vazias (o --cli nao quebra)
 
+    def test_battery_while_charging_is_not_exaggerated(self):
+        from logimouse import hidpp as H
+        h = self.headset()
+        fake = D.shared_logi_headset()
+        fake.mv, fake.flags = 4092, 0x03  # leitura real do G935 carregando
+        b = h.battery()
+        self.assertTrue(b["charging"])
+        self.assertEqual(b["status"], "Carregando")
+        self.assertTrue(b["approx"])
+        self.assertLess(b["percent"], H.volt_to_percent(4092))  # 92% sem o desconto
+        self.assertTrue(70 <= b["percent"] <= 85, b["percent"])
+        self.assertTrue(H.battery_text(b).startswith("~"))
+        fake.mv = 4400
+        self.assertEqual(h.battery()["percent"], 99)  # carregando nunca mostra 100%
+        fake.flags = 0x01
+        b = h.battery()
+        self.assertEqual((b["percent"], b["approx"], H.battery_text(b)), (100, False, "100%"))
+
     def test_eq_sidetone_and_lights(self):
         h = self.headset()
         self.assertEqual(h.set_eq_gains([12, -12, 0, 0, 0, 0, 0, 0, 0, 20]), [12, -12, 0, 0, 0, 0, 0, 0, 0, 12])

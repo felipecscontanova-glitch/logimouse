@@ -246,12 +246,15 @@ class Device:
             flags = r[2]
             if not mv:
                 raise NotSupported("bateria não informada agora (fone desligado?)")
-            charging = bool(flags & 0x02)
+            charging = bool(flags & 0x02)  # visto num G935 real: 0x01 na bateria, 0x03 carregando
             st = "Carregando" if charging else "Ligado"
             if flags & 0x04:
                 st = "Carga completa"
-            return dict(percent=volt_to_percent(mv), level=None, status=st, charging=charging,
-                        voltage=mv, source="HID++ 0x1F20 (estimado pela tensão)")
+            pct, src = charge_estimate(mv, charging)
+            if flags & 0x04:
+                pct = 100
+            return dict(percent=pct, level=None, status=st, charging=charging, voltage=mv,
+                        approx=charging and not flags & 0x04, source=src)
         raise NotSupported("bateria não informada pelo dispositivo")
 
     def battery_from_event(self, feat_idx, payload):
@@ -548,11 +551,26 @@ def battery_value(b):
     return {"Cheia": 100, "Boa": 60, "Baixa": 20, "Crítica": 5}.get(b.get("level"))
 
 
+# Carregando, o carregador empurra a tensao para cima e a conta pela tensao exagera a carga
+# (G935 real: 4,09 V = "92%" com a carga de verdade por volta de 75-85%). Desconta-se essa
+# sobra e a estimativa nunca chega a 100% enquanto carrega: o "cheio" vem do proprio fone.
+CHARGING_OFFSET_MV = 120
+
+
+def charge_estimate(mv, charging):
+    """(porcentagem, texto da fonte) a partir da tensao da bateria."""
+    if not charging:
+        return volt_to_percent(mv), "HID++ 0x1F20 (estimado pela tensão)"
+    pct = volt_to_percent(mv - CHARGING_OFFSET_MV)
+    return (min(pct, 99) if pct is not None else None,
+            "HID++ 0x1F20 (estimado pela tensão, descontando o carregador)")
+
+
 def battery_text(b):
     if not b:
         return "?"
     if b.get("percent") is not None:
-        return f"{b['percent']}%"
+        return f"{'~' if b.get('approx') else ''}{b['percent']}%"
     return b.get("level") or "?"
 
 

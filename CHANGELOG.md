@@ -1,5 +1,12 @@
 # Histórico de versões
 
+## 2.2.1 (2026-11-25)
+
+- Fones Logitech carregando (G935): a bateria pela tensão exagerava a carga, porque o carregador
+  empurra a tensão para cima (4,09 V aparecia como 92%). Agora desconta essa sobra, mostra a
+  porcentagem como aproximada (`~78% ⚡`) e nunca 100% enquanto carrega.
+- Confirmado num G935 real: o fone avisa "carregando" (sinal `0x03`; `0x01` na bateria).
+
 ## 2.2.0 (2026-11-25)
 
 - **Luzes também nos mouses**: a página "Luzes" aparece em qualquer dispositivo Logitech que

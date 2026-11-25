@@ -216,6 +216,7 @@ class FakeLogiHeadset(FakeMouse):
     def __init__(self, name="G935 Gaming Headset (demo)"):
         super().__init__(name=name, index=0xFF)
         self.mv = 3880
+        self.flags = 0x01  # 0x03 = carregando (visto num G935 real)
         self.side = 0
         self.gains = [-4, -4, -3, -2, 0, 1, 0, 0, -2, -3]
         self.leds = {0: (1, (0xA8, 0x55, 0xF7)), 1: (3, (0, 0, 0))}
@@ -224,7 +225,7 @@ class FakeLogiHeadset(FakeMouse):
         if fid == H.F_DEVICE_NAME and fn == 2:
             return [H.HEADSET_KIND]
         if fid == H.F_ADC_MEASUREMENT and fn == 0:
-            return [self.mv >> 8, self.mv & 0xFF, 0x01]
+            return [self.mv >> 8, self.mv & 0xFF, self.flags]
         if fid == H.F_SIDETONE:
             if fn == 0:
                 return [self.side]
