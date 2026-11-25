@@ -193,7 +193,66 @@ class FakeMouse:
         raise KeyError(fid)
 
 
+class FakeLogiHeadset(FakeMouse):
+    """Fone Logitech G935 simulado (HID++ direto pelo receptor USB, indice 0xFF)."""
+
+    FEATURES = [H.F_ROOT, 0x0001, H.F_DEVICE_NAME, H.F_LED_EFFECTS, 0x8010, H.F_EQUALIZER, H.F_SIDETONE,
+                H.F_ADC_MEASUREMENT]
+    FREQS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+
+    def __init__(self, name="G935 Gaming Headset (demo)"):
+        super().__init__(name=name, index=0xFF)
+        self.mv = 3880
+        self.side = 0
+        self.gains = [-4, -4, -3, -2, 0, 1, 0, 0, -2, -3]
+        self.leds = {0: (1, (0xA8, 0x55, 0xF7)), 1: (3, (0, 0, 0))}
+
+    def handle(self, fid, fn, p):
+        if fid == H.F_DEVICE_NAME and fn == 2:
+            return [H.HEADSET_KIND]
+        if fid == H.F_ADC_MEASUREMENT and fn == 0:
+            return [self.mv >> 8, self.mv & 0xFF, 0x01]
+        if fid == H.F_SIDETONE:
+            if fn == 0:
+                return [self.side]
+            if fn == 1:
+                self.side = p[0]
+                return [self.side]
+        if fid == H.F_EQUALIZER:
+            if fn == 0:
+                return [len(self.FREQS), 12, 1]
+            if fn == 1:
+                part = self.FREQS[p[0]:p[0] + 7]
+                return [p[0]] + [b for f in part for b in (f >> 8, f & 0xFF)]
+            if fn == 2:
+                return [g & 0xFF for g in self.gains]
+            if fn == 3:
+                self.gains = [b - 256 if b > 127 else b for b in p[1:11]]
+                return [p[0]] + list(p[1:11])
+        if fid == H.F_LED_EFFECTS:
+            effects = [0x0000, 0x0001, 0x000A, 0x0003]
+            if fn == 0:
+                return [2, 0, 1, 0, 3]
+            if fn == 1:
+                return [p[0], 0, 2 - p[0], len(effects)]
+            if fn == 2:
+                e = effects[p[1]]
+                return [p[0], p[1], e >> 8, e & 0xFF]
+            if fn == 3:
+                self.leds[p[0]] = (effects[p[1]], tuple(p[2:5]))
+                return []
+        return super().handle(fid, fn, p)
+
+
 _shared = None
+_shared_logi_headset = None
+
+
+def shared_logi_headset():
+    global _shared_logi_headset
+    if _shared_logi_headset is None:
+        _shared_logi_headset = FakeLogiHeadset()
+    return _shared_logi_headset
 
 
 def shared_mouse():
@@ -207,6 +266,8 @@ def shared_mouse():
 def discover_demo(nodes=None):
     fake = shared_mouse()
     found = H.probe_transport(fake, fake.bus) if fake.online else []
+    head = shared_logi_headset()
+    found += H.probe_transport(head, head.bus)
     return found, ([] if found else ["Mouse simulado desligado."])
 
 
@@ -282,6 +343,31 @@ def shared_headset():
     return _shared_headset
 
 
+class FakeBluetoothDevice:
+    """Acessorio qualquer que so informa a bateria ao sistema (como um controle Bluetooth)."""
+    kind = None
+    kind_name = "Controle"
+    is_pointer = False
+    is_headset = True
+    audio = False
+    protocol = None
+    ui = "generic"
+    connection = "Bluetooth"
+    detail = "Controle · Bluetooth"
+
+    def __init__(self, name="Controle sem fio (demo)", pct=81):
+        self.name, self.pct = name, pct
+
+    def read_battery(self):
+        return dict(percent=self.pct, level=None, status="Descarregando", charging=False, voltage=None,
+                    source="sistema (UPower)")
+
+    battery = read_battery
+
+    def close(self):
+        pass
+
+
 def discover_demo_headsets():
     from .headset import MchoseHeadset
-    return [MchoseHeadset(shared_headset(), "MCHOSE V9 Pro (demo)", 0x6046)], []
+    return [MchoseHeadset(shared_headset(), "MCHOSE V9 Pro (demo)", 0x6046), FakeBluetoothDevice()], []

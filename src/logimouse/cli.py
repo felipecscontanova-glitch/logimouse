@@ -65,6 +65,13 @@ def run_cli(dpi=None, demo=False):
         if s["hires"]:
             print(f"  Rolagem alta resolução: {'sim' if s['hires']['hires'] else 'não'}"
                   f", invertida: {'sim' if s['hires']['invert'] else 'não'}")
+        if s.get("sidetone") is not None:
+            print(f"  Retorno da voz: {s['sidetone']}%")
+        if s.get("eq") is not None and s.get("eq_info"):
+            print("  Equalizador do fone: " + "  ".join(
+                f"{f if f < 1000 else str(f // 1000) + 'k'}:{g:+d}" for f, g in zip(s["eq_info"]["freqs"], s["eq"])))
+        if s.get("leds"):
+            print("  Luzes: " + ", ".join(z["name"] for z in s["leds"]))
         if s["host_mode"] is not None:
             print(f"  Modo host: {'ligado' if s['host_mode'] else 'desligado (perfis da memória)'}")
         saved = config.device_settings(d.name)

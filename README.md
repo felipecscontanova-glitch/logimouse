@@ -23,6 +23,13 @@ programas da Logitech e sem nada rodando como root.
 
 <sub>Capturas feitas com o mouse e o headset simulados (`--demo`).</sub>
 
+## Fones Logitech e qualquer dispositivo (2.1)
+
+- **Fones Logitech** como o G935 aparecem sozinhos: bateria, retorno da voz, equalizador gravado
+  dentro do fone e luzes.
+- **Qualquer aparelho** pelo receptor ou por Bluetooth que informe bateria ao sistema (controles,
+  teclados, fones de outras marcas) ganha um cartão com a bateria e o aviso de bateria baixa.
+
 ## O que há de novo na 2.0
 
 - Painel novo em **GTK 4 + libadwaita**, tema escuro, com tela inicial de cartões (um por dispositivo).

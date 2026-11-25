@@ -30,6 +30,7 @@ class NewPanel(unittest.TestCase):
         config._memory = None
         D._shared = None
         D._shared_headset = None
+        D._shared_logi_headset = None
         if NewPanel.app is None:  # um aplicativo por processo (ele se registra no D-Bus)
             NewPanel.app = W.LogiApp(demo=True)
             NewPanel.app.register(None)
@@ -62,9 +63,11 @@ class NewPanel(unittest.TestCase):
         w.open_device(w.mice[0])
         for key, _ in w.secs:
             w.show_section(key)
-        w.open_device(w.heads[0])
-        for key, _ in w.secs:
-            w.show_section(key)
+        for d in w.mice[1:] + w.heads:  # fone Logitech, MCHOSE e um acessorio qualquer (Bluetooth)
+            w.open_device(d)
+            for key, _ in w.secs:
+                w.show_section(key)
+        self.assertEqual(sorted(d.ui for d in w.mice + w.heads), ["generic", "logi_headset", "mchose", "mouse"])
         w.go_home()
         self.assertEqual(w.stack.get_visible_child_name(), "home")
 
@@ -85,6 +88,14 @@ class NewPanel(unittest.TestCase):
         self.assertEqual(p.dpis[1], 900)
         from logimouse import profiles as P
         self.assertEqual(P.device_data(w.cur.name)["profiles"]["Padrão"]["dpis"][1], 900)
+
+    def test_logitech_headset_eq_written_to_headset(self):
+        w = self.win
+        g = next(d for d in w.mice if d.ui == "logi_headset")
+        w.open_device(g)
+        w._leq_preset("FPS")
+        w._leq_save()
+        self.pump(lambda: D.shared_logi_headset().gains == [-4, -3, -2, 0, 1, 3, 5, 5, 3, 1])
 
     def test_refuses_profile_without_left_click(self):
         w = self.win

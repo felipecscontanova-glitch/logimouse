@@ -30,6 +30,11 @@ F_POINTER_SPEED = 0x2205
 F_REPORT_RATE = 0x8060
 F_EXT_REPORT_RATE = 0x8061
 F_ONBOARD_PROFILES = 0x8100
+# fones Logitech (G935, G733, G535, PRO X...)
+F_ADC_MEASUREMENT = 0x1F20   # bateria pela tensao
+F_SIDETONE = 0x8300          # retorno da voz no fone (0..100)
+F_EQUALIZER = 0x8310         # equalizador gravado no fone
+F_LED_EFFECTS = 0x8070       # luzes por zona
 
 ERRORS_20 = {
     1: "erro desconhecido", 2: "argumento inválido", 3: "fora de alcance",
@@ -44,8 +49,9 @@ ERRORS_10 = {
 }
 KINDS = {
     0: "Teclado", 1: "Controle remoto", 2: "Teclado numérico", 3: "Mouse",
-    4: "Touchpad", 5: "Trackball", 6: "Apresentador", 7: "Receptor",
+    4: "Touchpad", 5: "Trackball", 6: "Apresentador", 7: "Receptor", 8: "Headset",
 }
+HEADSET_KIND = 8
 POINTING_KINDS = (3, 4, 5)
 
 
@@ -234,6 +240,18 @@ class Device:
                 st = "Carga completa"
             return dict(percent=volt_to_percent(mv), level=None, status=st,
                         charging=charging, voltage=mv, source="HID++ 0x1001 (estimado pela tensão)")
+        if self.has(F_ADC_MEASUREMENT):
+            r = self.call(F_ADC_MEASUREMENT, 0)
+            mv = (r[0] << 8) | r[1]
+            flags = r[2]
+            if not mv:
+                raise NotSupported("bateria não informada agora (fone desligado?)")
+            charging = bool(flags & 0x02)
+            st = "Carregando" if charging else "Ligado"
+            if flags & 0x04:
+                st = "Carga completa"
+            return dict(percent=volt_to_percent(mv), level=None, status=st, charging=charging,
+                        voltage=mv, source="HID++ 0x1F20 (estimado pela tensão)")
         raise NotSupported("bateria não informada pelo dispositivo")
 
     def battery_from_event(self, feat_idx, payload):
@@ -360,6 +378,90 @@ class Device:
             mode = (mode | 0x04) if invert else (mode & ~0x04)
         self.call(F_HIRES_WHEEL, 2, mode & 0xFF)
         return self.hires_wheel()
+
+    # ---- fones ----
+    @property
+    def is_audio(self):
+        """Fone/headset Logitech (HID++ tipo 8)."""
+        return self.kind == HEADSET_KIND
+
+    @property
+    def ui(self):
+        return "logi_headset" if self.is_audio else "mouse" if self.is_pointer else "generic"
+
+    def sidetone(self):
+        """Retorno da voz no fone, 0..100."""
+        return self.call(F_SIDETONE, 0)[0]
+
+    def set_sidetone(self, level):
+        self.call(F_SIDETONE, 1, max(0, min(100, int(level))))
+        return self.sidetone()
+
+    def eq_info(self):
+        """dict(bands, range_db, freqs) do equalizador gravado no fone."""
+        r = self.call(F_EQUALIZER, 0)
+        n, rng = r[0], r[1]
+        freqs = []
+        while len(freqs) < n:
+            chunk = self.call(F_EQUALIZER, 1, len(freqs))
+            got = [int.from_bytes(chunk[1 + i * 2:3 + i * 2], "big") for i in range(min(7, n - len(freqs)))]
+            if not any(got):
+                break
+            freqs += got
+        return dict(bands=n, range_db=rng, freqs=freqs[:n])
+
+    def eq_gains(self, n=None):
+        n = n or self.eq_info()["bands"]
+        r = self.call(F_EQUALIZER, 2, 1)
+        return [b - 256 if b > 127 else b for b in r[:n]]
+
+    def set_eq_gains(self, gains):
+        """Grava as faixas (dB) no fone. Vale em qualquer computador."""
+        info = self.eq_info()
+        if len(gains) != info["bands"]:
+            raise ValueError(f"o fone tem {info['bands']} faixas")
+        rng = info["range_db"] or 12
+        vals = [max(-rng, min(rng, int(round(g)))) & 0xFF for g in gains]
+        self.call(F_EQUALIZER, 3, 1, *vals)
+        return self.eq_gains(info["bands"])
+
+    # luzes (0x8070): efeitos por zona
+    LED_EFFECTS = {0x0000: "Desligada", 0x0001: "Cor fixa", 0x0003: "Ciclo de cores", 0x000A: "Respirar"}
+    LED_ZONES = {0x0001: "Faixa", 0x0002: "Logo"}
+
+    def led_zones(self):
+        """[dict(zone, name, effects=[(indice, id, nome)])]."""
+        out = []
+        for z in range(self.call(F_LED_EFFECTS, 0)[0]):
+            zi = self.call(F_LED_EFFECTS, 1, z)
+            loc = (zi[1] << 8) | zi[2]
+            effects = []
+            for e in range(min(zi[3], 16)):
+                ei = self.call(F_LED_EFFECTS, 2, z, e)
+                eid = (ei[2] << 8) | ei[3]
+                if eid in self.LED_EFFECTS:
+                    effects.append((e, eid, self.LED_EFFECTS[eid]))
+            out.append(dict(zone=z, name=self.LED_ZONES.get(loc, f"Zona {z + 1}"), effects=effects))
+        return out
+
+    def set_led(self, zone, effect_id, color=(0xA8, 0x55, 0xF7), period=4000):
+        """Aplica um efeito numa zona: 0 desligada, 1 cor fixa, 0x0A respirar, 3 ciclo."""
+        z = next((x for x in self.led_zones() if x["zone"] == zone), None)
+        if z is None:
+            raise ValueError("zona de luz inexistente")
+        idx = next((e for e, eid, _ in z["effects"] if eid == effect_id), None)
+        if idx is None:
+            raise NotSupported("efeito não suportado nesta zona")
+        r, g, b = (int(c) & 0xFF for c in color)
+        per = max(1000, min(20000, int(period)))
+        params = [0] * 10
+        if effect_id == 0x0001:
+            params[:4] = [r, g, b, 0]
+        elif effect_id == 0x000A:
+            params[:7] = [r, g, b, per >> 8, per & 0xFF, 0, 0]
+        elif effect_id == 0x0003:
+            params[5:8] = [per >> 8, per & 0xFF, 0]
+        self.call(F_LED_EFFECTS, 3, zone, idx, *params, 0x01)
 
     # ---- perfis da memoria (mouses gamer) ----
     def host_mode(self):
@@ -583,6 +685,15 @@ def read_all(dev):
             s.setdefault("errors", []).append(str(e))
 
     s["battery"] = read_battery(dev)
+    if dev.is_audio:
+        safe("sidetone", dev.sidetone)
+        safe("eq_info", dev.eq_info)
+        if s.get("eq_info"):
+            safe("eq", lambda: dev.eq_gains(s["eq_info"]["bands"]))
+        safe("leds", dev.led_zones)
+        for k in ("dpi", "pointer_speed", "report_rate", "smartshift", "hires", "host_mode"):
+            s[k] = None
+        return s
     safe("dpi", dev.dpi)
     safe("pointer_speed", dev.pointer_speed)
     safe("report_rate", dev.report_rate)
@@ -604,6 +715,9 @@ def apply_settings(dev, saved):
         ("smartshift", "roda", lambda v: dev.set_smartshift(v[0], v[1])),
         ("hires", "alta resolução", lambda v: dev.set_hires_wheel(hires=bool(v))),
         ("invert", "inverter rolagem", lambda v: dev.set_hires_wheel(invert=bool(v))),
+        ("sidetone", "retorno da voz", lambda v: dev.set_sidetone(int(v))),
+        ("leds", "luzes", lambda v: [dev.set_led(int(z), int(x["effect"]), x.get("color", (0, 0, 0)),
+                                                 x.get("period", 4000)) for z, x in v.items()]),
     ]
     for key, label, fn in steps:
         if key not in saved or saved[key] is None:

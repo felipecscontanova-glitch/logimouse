@@ -1,5 +1,18 @@
 # Histórico de versões
 
+## 2.1.0 (2026-11-25)
+
+- **Qualquer dispositivo aparece sozinho**, pelo receptor ou por Bluetooth:
+  - todos os Logitech com HID++ (mouses, fones, teclados), não só os mouses;
+  - qualquer aparelho que informe bateria ao sistema (UPower): controles, teclados, fones e
+    caixas Bluetooth de qualquer marca, com cartão, bateria e aviso de bateria baixa.
+    Logitech e MCHOSE vistos pelos dois caminhos aparecem uma vez só.
+- **Fones Logitech** (testado no G935): bateria pela tensão (HID++ 0x1F20), retorno da voz
+  (0x8300), **equalizador de 10 faixas gravado dentro do fone** (0x8310) e **luzes** por zona
+  (0x8070: desligada, cor fixa, respirar, ciclo de cores). Retorno e luzes são reaplicados quando
+  o fone religa. A bateria do fone aparece na barra (🎧).
+- `--cli` mostra também os ajustes do fone.
+
 ## 2.0.2 (2026-11-18)
 
 - Som baixo no V9 Pro mesmo com tudo no máximo: o receptor tem um segundo volume interno

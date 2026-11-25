@@ -199,6 +199,8 @@ class MchoseHeadset:
     is_pointer = False
     is_headset = True
     protocol = None
+    audio = True
+    ui = "mchose"
 
     def __init__(self, port, name, pid=0, bus=0x03, write_len=DEFAULT_LEN, vid=MCHOSE_VID):
         self.t = port
@@ -330,7 +332,21 @@ def parse_upower_info(text):
     return info
 
 
-def upower_headsets(run=_run):
+# Tipos do UPower -> nome na tela. Baterias do notebook, nobreak e tomada ficam de fora.
+UPOWER_KINDS = {"mouse": "Mouse", "keyboard": "Teclado", "headset": "Headset", "headphones": "Fone",
+                "gaming-input": "Controle", "phone": "Celular", "tablet": "Tablet", "pen": "Caneta",
+                "touchpad": "Touchpad", "speakers": "Caixa de som", "media-player": "Player",
+                "remote-control": "Controle remoto", "computer": "Computador", "printer": "Impressora",
+                "camera": "Câmera", "wearable": "Relógio/pulseira", "toy": "Brinquedo",
+                "bluetooth-generic": "Dispositivo Bluetooth", "other": "Dispositivo", "unknown": "Dispositivo"}
+UPOWER_SKIP = ("line-power", "battery", "ups", "monitor")
+
+
+def upower_devices(run=_run):
+    """Qualquer acessorio que informa bateria ao sistema (Bluetooth, receptores, cabo).
+
+    Os Logitech que o LogiMouse fala direto (HID++: native-path hidpp_battery_*) ficam de
+    fora para nao aparecerem duas vezes."""
     if run is _run and not shutil.which("upower"):
         return []
     out = []
@@ -338,22 +354,31 @@ def upower_headsets(run=_run):
         if "DisplayDevice" in path:
             continue
         info = parse_upower_info(run(["upower", "-i", path]))
-        model = info.get("model") or ""
-        if info.get("type") not in HEADSET_TYPES and "mchose" not in model.lower():
+        typ = info.get("type") or "unknown"
+        model = (info.get("model") or "").strip()
+        if typ in UPOWER_SKIP or (info.get("native-path") or "").startswith("hidpp_battery"):
             continue
+        if info.get("power-supply") == "yes":
+            continue  # bateria do proprio computador
         m = re.match(r"(\d+(?:[.,]\d+)?)%", info.get("percentage", ""))
         if not m:
             continue
-        out.append(UPowerHeadset(path, model or "Headset", info, run))
+        out.append(UPowerHeadset(path, model or UPOWER_KINDS.get(typ, "Dispositivo"), info, run))
     return out
 
 
+def upower_headsets(run=_run):
+    """Só fones e headsets (e qualquer MCHOSE) que o sistema conhece."""
+    return [d for d in upower_devices(run) if d.audio or "mchose" in d.name.lower()]
+
+
 class UPowerHeadset:
+    """Acessorio visto pelo UPower: so a bateria (o nome e historico; vale para qualquer tipo)."""
     kind = None
-    kind_name = "Headset"
     is_pointer = False
-    is_headset = True
+    is_headset = True  # acessorio deste modulo (nao HID++)
     protocol = None
+    ui = "generic"
 
     def __init__(self, path, name, info, run=_run):
         self.path = path
@@ -361,6 +386,18 @@ class UPowerHeadset:
         self.info = info
         self.run = run
         self.last_battery = None
+
+    @property
+    def type(self):
+        return self.info.get("type") or "unknown"
+
+    @property
+    def audio(self):
+        return self.type in HEADSET_TYPES
+
+    @property
+    def kind_name(self):
+        return UPOWER_KINDS.get(self.type, "Dispositivo")
 
     @property
     def connection(self):
@@ -374,7 +411,7 @@ class UPowerHeadset:
         info = parse_upower_info(self.run(["upower", "-i", self.path])) or self.info
         m = re.match(r"(\d+(?:[.,]\d+)?)%", info.get("percentage", ""))
         if not m:
-            raise HeadsetTimeout("o sistema não tem a bateria deste headset agora")
+            raise HeadsetTimeout("o sistema não tem a bateria deste dispositivo agora")
         state = info.get("state", "")
         st = {"discharging": "Descarregando", "charging": "Carregando", "fully-charged": "Carga completa",
               "pending-charge": "Aguardando carga"}.get(state, "Ligado")
@@ -390,13 +427,26 @@ class UPowerHeadset:
         pass
 
 
-def discover():
-    """Todos os headsets: MCHOSE pelo receptor e os que o UPower conhece."""
+def same_device(a, b):
+    """'Logitech G305' e 'G305 Lightspeed Wireless Gaming Mouse' sao o mesmo aparelho?"""
+    def words(x):
+        return {w for w in re.findall(r"[a-z0-9]+", (x or "").lower()) if w not in ("logitech", "mchose", "the")}
+    wa, wb = words(a), words(b)
+    if not wa or not wb:
+        return False
+    small, big = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    return small <= big
+
+
+def discover(known_names=()):
+    """Acessorios: MCHOSE pelo receptor e tudo que o sistema conhece com bateria (UPower).
+
+    known_names: nomes de dispositivos ja mostrados por outro caminho (HID++), para nao repetir."""
     found, problems = discover_mchose()
-    names = {h.name.lower() for h in found}
-    for h in upower_headsets():
-        if h.name.lower() not in names:
-            found.append(h)
+    for d in upower_devices():
+        if any(same_device(d.name, n) for n in [h.name for h in found] + list(known_names)):
+            continue
+        found.append(d)
     return found, problems
 
 

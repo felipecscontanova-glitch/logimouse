@@ -80,6 +80,7 @@ class Monitor:
         for d in self.devices:
             i = self.info[d]
             out.append(dict(name=d.name, kind=d.kind_name, pointer=d.is_pointer, connection=d.connection,
+                            headset=getattr(d, "is_audio", False),
                             online=i["online"], battery=i["battery"], last_apply=i["last_apply"]))
         return out
 
@@ -345,7 +346,8 @@ class HeadsetWatcher:
                 self._stop.wait(5)
 
     def snapshot(self):
-        return [dict(name=h.name, kind=h.kind_name, pointer=False, headset=True, connection=h.connection,
+        return [dict(name=h.name, kind=h.kind_name, pointer=False, headset=getattr(h, "audio", True),
+                     connection=h.connection,
                      online=self.info[h]["online"], battery=self.info[h]["battery"], last_apply=None)
                 for h in self.headsets]
 
@@ -586,11 +588,11 @@ class TrayApp:
         self.monitor = Monitor(disc, nodes,
                                on_change=lambda s: GLib.idle_add(self.update, s),
                                on_low_battery=lambda n, p: GLib.idle_add(
-                                   _notify, "Bateria do mouse baixa", f"{n}: {p}%. Hora de carregar."))
+                                   _notify, "Bateria baixa", f"{n}: {p}%. Hora de carregar."))
         self.headsets = HeadsetWatcher(hdisc, hnodes,
                                        on_change=lambda s: GLib.idle_add(self.update_headsets, s),
                                        on_low_battery=lambda n, p: GLib.idle_add(
-                                           _notify, "Bateria do headset baixa", f"{n}: {p}%. Hora de carregar."))
+                                           _notify, "Bateria baixa", f"{n}: {p}%. Hora de carregar."))
         self.update_info = None
         self._upd_lock = threading.Lock()
         self._upd_stop = threading.Event()
@@ -634,7 +636,8 @@ class TrayApp:
         p = self._primary()
         if p:
             parts.append(self._bat_label(p))
-        head = next((d for d in self.head_snap if d["online"] and d["battery"]), None)
+        head = next((d for d in self.head_snap + self.mouse_snap
+                     if d.get("headset") and d["online"] and d["battery"]), None)
         if head:
             parts.append("🎧 " + self._bat_label(head))
         self.ind.set_label("  ".join(parts), "100% ⚡  🎧 100% ⚡")

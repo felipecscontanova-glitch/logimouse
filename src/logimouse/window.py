@@ -341,9 +341,10 @@ class MouseDiagram(Gtk.DrawingArea):
 class EqCurve(Gtk.DrawingArea):
     """Curva do equalizador: arraste os pontos para cima/baixo."""
 
-    def __init__(self, gains, on_change, on_done):
+    def __init__(self, gains, on_change, on_done, rng=12):
         super().__init__()
         self.gains = list(gains)
+        self.rng = rng or 12
         self.on_change, self.on_done = on_change, on_done
         self.drag = None
         self.set_content_height(230)
@@ -357,17 +358,17 @@ class EqCurve(Gtk.DrawingArea):
         self.start = (0, 0)
 
     def _x(self, i, w):
-        return w * (0.05 + 0.9 * i / 9)
+        return w * (0.05 + 0.9 * i / max(1, len(self.gains) - 1))
 
     def _y(self, g, h):
-        return h / 2 - g * (h / 2 - 16) / 12
+        return h / 2 - g * (h / 2 - 16) / self.rng
 
     def _gain_at(self, y, h):
-        return max(-12, min(12, round((h / 2 - y) * 12 / (h / 2 - 16))))
+        return max(-self.rng, min(self.rng, round((h / 2 - y) * self.rng / (h / 2 - 16))))
 
     def _begin(self, _g, x, y):
         w = self.get_width()
-        self.drag = min(range(10), key=lambda i: abs(self._x(i, w) - x))
+        self.drag = min(range(len(self.gains)), key=lambda i: abs(self._x(i, w) - x))
         self.start = (x, y)
         self._set(y)
 
@@ -396,7 +397,7 @@ class EqCurve(Gtk.DrawingArea):
         cr.rectangle(0, 0, w, h)
         cr.fill()
         cr.set_line_width(1)
-        for g in (-12, -6, 0, 6, 12):
+        for g in (-self.rng, -self.rng / 2, 0, self.rng / 2, self.rng):
             cr.set_source_rgb(*(LINE if g else (0x2A / 255, 0x2B / 255, 0x45 / 255)))
             cr.move_to(0, self._y(g, h))
             cr.line_to(w, self._y(g, h))
@@ -715,7 +716,8 @@ class MainWindow(Adw.ApplicationWindow):
         self.say("Procurando mouse e headset...")
         if self.demo:
             from . import demo as D
-            mice_fn, heads_fn = D.discover_demo, D.discover_demo_headsets
+            mice_fn = D.discover_demo
+            heads_fn = lambda known: D.discover_demo_headsets()  # noqa: E731
         else:
             mice_fn, heads_fn = H.discover, HS.discover
         demo = self.demo
@@ -723,17 +725,17 @@ class MainWindow(Adw.ApplicationWindow):
         def job():
             mice, problems = mice_fn()
             try:
-                heads, hp = heads_fn()
+                heads, hp = heads_fn([m.name for m in mice])
             except Exception as e:  # noqa: BLE001 - o headset nunca derruba o mouse
                 heads, hp = [], [f"Headset: {e}"]
             if heads and not mice:
                 problems = [p for p in problems if "Logitech" not in p]
-            mice = [m for m in mice if m.is_pointer] or mice
+            mice.sort(key=lambda m: (0 if m.is_pointer else 1 if m.is_audio else 2, m.name or ""))
             states = {}
             for m in mice:
                 states[id(m)] = load_mouse(m)
             for h in heads:
-                states[id(h)] = load_headset(h, demo)
+                states[id(h)] = load_headset(h, demo) if h.ui == "mchose" else load_generic(h)
             return mice, heads, states, problems + hp
         self.worker.submit(job, self._scanned, self._scan_failed)
         return False
@@ -851,10 +853,10 @@ class MainWindow(Adw.ApplicationWindow):
         top = hbox(16)
         t = vbox(6)
         t.set_hexpand(True)
-        is_h = getattr(d, "is_headset", False)
-        t.append(lab("HEADSET" if is_h else "MOUSE", "lm-tag", *(["purple"] if is_h else [])))
+        is_h = d.ui in ("mchose", "logi_headset") or getattr(d, "audio", False)
+        t.append(lab(d.kind_name.upper(), "lm-tag", *(["purple"] if is_h else [])))
         t.append(lab(d.name, "lm-name", wrap=True))
-        t.append(lab(d.detail if is_h else f"{d.connection} · HID++ {d.protocol[0]}.{d.protocol[1]}", "lm-muted"))
+        t.append(lab(f"{d.connection} · HID++ {d.protocol[0]}.{d.protocol[1]}" if d.protocol else d.detail, "lm-muted"))
         top.append(t)
         bat = s.get("battery")
         top.append(Ring(110, H.battery_value(bat) if bat else None, H.battery_text(bat) if bat else "—"))
@@ -872,6 +874,14 @@ class MainWindow(Adw.ApplicationWindow):
         return b
 
     def _stats(self, d, s):
+        if d.ui == "logi_headset":
+            eq = s.get("eq")
+            return [("EQ NO FONE", "Ligado" if eq and any(eq) else "Plano"),
+                    ("RETORNO", f"{s['sidetone']}%" if s.get("sidetone") is not None else "—"),
+                    ("CONEXÃO", d.connection)]
+        if d.ui == "generic":
+            b = s.get("battery") or {}
+            return [("TIPO", d.kind_name), ("CONEXÃO", d.connection), ("ESTADO", b.get("status") or "—")]
         if getattr(d, "is_headset", False):
             a = AU.settings()
             return [("EQ", a["preset"] if a.get("eq_on") else "Desligado"), ("SURROUND", "7.1" if a.get("surround") else "Não"),
@@ -900,7 +910,11 @@ class MainWindow(Adw.ApplicationWindow):
             self.work = json_copy(ob["profile"])
             P.ensure_default(d.name, json_copy(ob["profile"]))
             self.sel_level = self.work["default_dpi"]
-        if is_h:
+        if d.ui == "logi_headset":
+            secs = [("lsound", "Som"), ("lights", "Luzes"), ("info", "Geral")]
+        elif d.ui == "generic":
+            secs = [("info", "Geral")]
+        elif is_h:
             secs = [("sound", "Som"), ("mic", "Microfone"), ("general", "Geral")]
         elif ob:
             secs = [("perf", "Desempenho"), ("buttons", "Botões"), ("macros", "Macros"), ("profiles", "Perfis"),
@@ -925,7 +939,7 @@ class MainWindow(Adw.ApplicationWindow):
         head.append(self.side_ring)
         ht = vbox(2)
         ht.append(lab(d.name, "lm-h2", wrap=True))
-        ht.append(lab("Headset" if is_h else d.kind_name, "lm-small"))
+        ht.append(lab(d.kind_name, "lm-small"))
         head.append(ht)
         side.append(head)
         lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
@@ -1848,6 +1862,170 @@ class MainWindow(Adw.ApplicationWindow):
             v.set_text(str(self.test[k]))
 
     # ======================================================================
+    # FONE LOGITECH (HID++: G935, G733, PRO X...)
+    # ======================================================================
+    def _sec_lsound(self, body):
+        d, s = self.cur, self.st
+        info, eq = s.get("eq_info"), s.get("eq")
+        if info and eq is not None:
+            c = card()
+            top = hbox(12)
+            t = vbox(4)
+            t.set_hexpand(True)
+            t.append(lab("Equalizador do fone", "lm-h2"))
+            t.append(lab("Fica gravado dentro do fone e vale em qualquer computador. Arraste os pontos ou escolha uma "
+                         "predefinição, depois grave.", "lm-muted", wrap=True))
+            top.append(t)
+            c.append(top)
+            self.leq = list(eq)
+            if info["bands"] == len(AU.FREQS):
+                names = list(AU.PRESETS)
+                cur = next((n for n, v in AU.PRESETS.items() if v == self.leq), None)
+                c.append(pills([(n, n) for n in names], cur, self._leq_preset))
+            self.leq_curve = EqCurve(self.leq, self._leq_drag, lambda g: self._leq_drag(g), rng=info["range_db"])
+            c.append(self.leq_curve)
+            lbls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, homogeneous=True)
+            self.leq_vals = []
+            for f, g in zip(info["freqs"], self.leq):
+                b = vbox(2)
+                v = lab(gain_text(g), "lm-h2", xalign=0.5)
+                self.leq_vals.append(v)
+                b.append(v)
+                b.append(lab(f"{f // 1000}k Hz" if f >= 1000 else f"{f} Hz", "lm-small", xalign=0.5))
+                lbls.append(b)
+            c.append(lbls)
+            bar = hbox(10)
+            sp = hbox(0)
+            sp.set_hexpand(True)
+            bar.append(sp)
+            bar.append(button("Plano", "lm-ghost", cb=lambda: self._leq_preset("Plano")))
+            bar.append(button("Gravar no fone", "lm-primary", cb=self._leq_save))
+            c.append(bar)
+            body.append(c)
+        if s.get("sidetone") is not None:
+            c = card("Retorno da voz", "Quanto da sua voz você ouve no próprio fone enquanto fala (feito pelo fone, "
+                     "sem atraso).")
+            row = hbox(12)
+            val = lab(f"{s['sidetone']}%", "lm-h2")
+            sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
+            sc.set_hexpand(True)
+            sc.set_draw_value(False)
+            sc.set_value(s["sidetone"])
+            sc.connect("value-changed", lambda w: val.set_text(f"{int(w.get_value())}%"))
+            rel = Gtk.GestureClick()
+            rel.connect("released", lambda *_: self._apply(lambda v=int(sc.get_value()): d.set_sidetone(v),
+                                                           "Retorno da voz", {"sidetone": int(sc.get_value())}))
+            sc.add_controller(rel)
+            row.append(sc)
+            row.append(val)
+            c.append(row)
+            body.append(c)
+        if not (info or s.get("sidetone") is not None):
+            body.append(card("Este fone não tem ajustes de som conhecidos", "Só a bateria é lida.", "dashed"))
+        body.append(lab("Redução de ruído por IA e surround 7.1 do LogiMouse ainda são só para o MCHOSE; no G935 o "
+                        "equalizador acima é o do próprio fone.", "lm-small", wrap=True))
+
+    def _leq_drag(self, g):
+        self.leq = list(g)
+        for v, x in zip(self.leq_vals, g):
+            v.set_text(gain_text(x))
+
+    def _leq_preset(self, name):
+        g = list(AU.PRESETS.get(name, [0] * len(self.leq)))
+        if len(g) != len(self.leq):
+            g = [0] * len(self.leq)
+        self.leq_curve.set_gains(g)
+        self._leq_drag(g)
+
+    def _leq_save(self):
+        d, gains = self.cur, list(self.leq)
+
+        def ok(res):
+            self.st["eq"] = res
+            self.toast_msg("Equalizador gravado no fone.")
+        self.say("Gravando no fone...")
+        self.worker.submit(lambda: d.set_eq_gains(gains), ok, lambda e: self.say(f"Não gravou: {e}"))
+
+    def _sec_lights(self, body):
+        d, s = self.cur, self.st
+        zones = s.get("leds") or []
+        if not zones:
+            body.append(card("Este fone não tem luzes controláveis.", None, "dashed"))
+            return
+        saved = config.device_settings(d.name).get("leds") or {}
+        self.led_state = {}
+        for z in zones:
+            cur = saved.get(str(z["zone"])) or {}
+            st = self.led_state[z["zone"]] = dict(effect=int(cur.get("effect", 1)),
+                                                 color=tuple(cur.get("color", (0xA8, 0x55, 0xF7))),
+                                                 period=int(cur.get("period", 4000)))
+            c = card(z["name"])
+            opts = [(eid, name) for _, eid, name in z["effects"]]
+            if st["effect"] not in dict(opts):
+                st["effect"] = opts[0][0]
+            c.append(pills(opts, st["effect"], lambda v, zone=z["zone"]: self.led_state[zone].update(effect=v)))
+            row = hbox(12)
+            row.append(lab("Cor", "lm-muted"))
+            cb = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False))
+            rgba = Gdk.RGBA()
+            rgba.parse("#%02x%02x%02x" % st["color"])
+            cb.set_rgba(rgba)
+            cb.connect("notify::rgba", lambda w, _p, zone=z["zone"]: self.led_state[zone].update(
+                color=tuple(int(round(x * 255)) for x in (w.get_rgba().red, w.get_rgba().green, w.get_rgba().blue))))
+            row.append(cb)
+            row.append(lab("Velocidade", "lm-muted"))
+            sp = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1000, 20000, 500)
+            sp.set_inverted(True)
+            sp.set_hexpand(True)
+            sp.set_draw_value(False)
+            sp.set_value(st["period"])
+            sp.connect("value-changed", lambda w, zone=z["zone"]: self.led_state[zone].update(period=int(w.get_value())))
+            row.append(sp)
+            c.append(row)
+            c.append(button("Aplicar", "lm-primary", cb=lambda zone=z["zone"]: self._led_apply(zone)))
+            body.append(c)
+        body.append(lab("A velocidade vale para “Respirar” e “Ciclo de cores”. O LogiMouse reaplica as luzes quando o "
+                        "fone religa.", "lm-small", wrap=True))
+
+    def _led_apply(self, zone):
+        d = self.cur
+        st = dict(self.led_state[zone])
+        saved = dict(config.device_settings(d.name).get("leds") or {})
+        saved[str(zone)] = dict(effect=st["effect"], color=list(st["color"]), period=st["period"])
+        self._apply(lambda: d.set_led(zone, st["effect"], st["color"], st["period"]), "Luzes", {"leds": saved})
+
+    def _sec_info(self, body):
+        d, s = self.cur, self.st
+        b = s.get("battery")
+        c = card("Bateria")
+        row = hbox(12)
+        row.append(lab(H.battery_text(b) if b else "—", "lm-big"))
+        extra = (b or {}).get("status") or s.get("error") or "não informada agora"
+        if b and b.get("voltage"):
+            extra += f" · {b['voltage'] / 1000:.2f} V"
+        row.append(lab(extra, "lm-muted"))
+        c.append(row)
+        c.append(Gtk.LevelBar(min_value=0, max_value=100, value=(H.battery_value(b) or 0) if b else 0))
+        r, _ = switch_row("Avisar com bateria baixa (15%)", config.get_option("notify_low"),
+                          lambda v: config.set_option("notify_low", v))
+        c.append(r)
+        body.append(c)
+        c = card("Dispositivo")
+        for k, v in (("Tipo", d.kind_name), ("Conexão", d.connection),
+                     ("Fonte da bateria", (b or {}).get("source") or "—")):
+            row = hbox(12)
+            kl = lab(k, "lm-muted")
+            kl.set_size_request(160, -1)
+            row.append(kl)
+            row.append(lab(v))
+            c.append(row)
+        body.append(c)
+        if d.ui == "generic":
+            body.append(card("Só a bateria", "Este aparelho informa a bateria ao sistema, mas os ajustes dele "
+                             "(equalizador, botões, luzes) usam um protocolo próprio da marca que o LogiMouse ainda "
+                             "não conhece.", "dashed"))
+
+    # ======================================================================
     # HEADSET
     # ======================================================================
     def audio_change(self, rebuild=False, **kw):
@@ -2197,6 +2375,15 @@ def load_headset(h, demo=False):
             s["micvol"] = AU.get_volume(src["id"])
         card = AU.headset_card()
         s["hw"] = AU.hw_volumes(card) if card else []
+    return s
+
+
+def load_generic(d):
+    s = dict(battery=None, error=None)
+    try:
+        s["battery"] = d.read_battery()
+    except HS.HeadsetError as e:
+        s["error"] = str(e)
     return s
 
 

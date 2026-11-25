@@ -174,6 +174,81 @@ class PcProfiles(TempConfig):
             P.save_macros([{"name": "x", "mode": "?", "steps": []}])
 
 
+class LogitechHeadset(TempConfig):
+    def headset(self):
+        D._shared_logi_headset = None
+        devs, _ = D.discover_demo()
+        return next(d for d in devs if d.is_audio)
+
+    def test_detected_as_headset(self):
+        from logimouse import hidpp as H
+        h = self.headset()
+        self.assertEqual((h.kind_name, h.ui, h.index), ("Headset", "logi_headset", 0xFF))
+        s = H.read_all(h)
+        self.assertEqual(s["battery"]["source"], "HID++ 0x1F20 (estimado pela tensão)")
+        self.assertEqual(s["battery"]["voltage"], 3880)
+        self.assertEqual(s["eq_info"]["freqs"], [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000])
+        self.assertEqual(s["eq"], [-4, -4, -3, -2, 0, 1, 0, 0, -2, -3])
+        self.assertEqual([z["name"] for z in s["leds"]], ["Logo", "Faixa"])
+        self.assertIsNone(s["dpi"])  # chaves de mouse vazias (o --cli nao quebra)
+
+    def test_eq_sidetone_and_lights(self):
+        h = self.headset()
+        self.assertEqual(h.set_eq_gains([12, -12, 0, 0, 0, 0, 0, 0, 0, 20]), [12, -12, 0, 0, 0, 0, 0, 0, 0, 12])
+        with self.assertRaises(ValueError):
+            h.set_eq_gains([0] * 5)
+        self.assertEqual(h.set_sidetone(140), 100)
+        h.set_led(1, 0x000A, (1, 2, 3), 3000)
+        self.assertEqual(D.shared_logi_headset().leds[1], (0x000A, (1, 2, 3)))
+
+    def test_reapplied_on_reconnect(self):
+        from logimouse import hidpp as H
+        h = self.headset()
+        done, failed = H.apply_settings(h, {"sidetone": 30, "leds": {"0": {"effect": 0}}})
+        self.assertEqual((done, failed), (["retorno da voz", "luzes"], []))
+        self.assertEqual(D.shared_logi_headset().side, 30)
+        self.assertEqual(D.shared_logi_headset().leds[0][0], 0)
+
+
+class AnyDevice(unittest.TestCase):
+    """Qualquer acessorio que informa bateria ao sistema (UPower)."""
+
+    def upower(self, devices):
+        import subprocess as sp
+
+        def run(cmd, timeout=5):
+            if cmd[1] == "-e":
+                return "\n".join(devices) + "\n/org/freedesktop/UPower/devices/DisplayDevice\n"
+            return devices[cmd[2]]
+        return run
+
+    def info(self, typ, model, path, pct, extra=""):
+        return (f"  native-path:          {path}\n  model:                {model}\n  {extra}\n  {typ}\n"
+                f"    present:             yes\n    state:               discharging\n"
+                f"    percentage:          {pct}%\n")
+
+    def test_lists_any_device_but_not_laptop_or_hidpp(self):
+        from logimouse import headset as HS
+        devs = {"/u/1": self.info("gaming-input", "Xbox Wireless Controller", "/org/bluez/hci0/dev_AA", 70),
+                "/u/2": self.info("keyboard", "K380", "/org/bluez/hci0/dev_BB", 40),
+                "/u/3": self.info("mouse", "Logitech G305", "hidpp_battery_0", 55),
+                "/u/4": self.info("battery", "Notebook", "BAT0", 90, "power supply:         yes"),
+                "/u/5": self.info("headphones", "WH-1000XM4", "/org/bluez/hci0/dev_CC", 30)}
+        out = HS.upower_devices(self.upower(devs))
+        self.assertEqual([(d.name, d.kind_name, d.audio) for d in out],
+                         [("Xbox Wireless Controller", "Controle", False), ("K380", "Teclado", False),
+                          ("WH-1000XM4", "Fone", True)])
+        self.assertEqual(out[0].connection, "Bluetooth")
+        self.assertEqual(out[1].battery()["percent"], 40)
+        self.assertEqual([d.name for d in HS.upower_headsets(self.upower(devs))], ["WH-1000XM4"])
+
+    def test_same_device(self):
+        from logimouse import headset as HS
+        self.assertTrue(HS.same_device("Logitech G305", "G305 Lightspeed Wireless Gaming Mouse"))
+        self.assertTrue(HS.same_device("MCHOSE V9 PRO", "MCHOSE V9 Pro"))
+        self.assertFalse(HS.same_device("Logitech G305", "G935 Gaming Headset"))
+
+
 class Audio(TempConfig):
     def test_nothing_on_means_no_service(self):
         self.assertIsNone(AU.build_conf(dict(AU.DEFAULTS)))
