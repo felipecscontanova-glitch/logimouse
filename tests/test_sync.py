@@ -122,7 +122,7 @@ class SyncedLightsAndGameRules(Base):
 
 class Capabilities(Base):
     def test_capabilities_from_the_device(self):
-        from logimouse import window as W
+        from logimouse import caps as W
         self.pc("a")
         devs, _ = D.discover_demo()
         head = next(d for d in devs if d.ui == "logi_headset")
