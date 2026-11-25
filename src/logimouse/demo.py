@@ -116,6 +116,12 @@ class FakeMouse:
                 return [self.FEATURES.index(want) if want in self.FEATURES else 0, 0, 0]
             if fn == 1:
                 return [4, 5, p[2]]
+        if fid == 0x0001:
+            if fn == 0:
+                return [len(self.FEATURES) - 1]
+            if fn == 1:
+                f = self.FEATURES[p[0]]
+                return [f >> 8, f & 0xFF]
         if fid == H.F_DEVICE_NAME:
             if fn == 0:
                 return [len(self.name)]

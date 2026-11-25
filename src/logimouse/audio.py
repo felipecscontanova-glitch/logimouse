@@ -49,7 +49,7 @@ VOICE = {
 NR_LEVELS = [("Leve", "Voz mais natural", 50.0), ("Média", "Bom para jogos", 75.0),
              ("Forte", "Ambiente barulhento", 90.0)]
 
-DEFAULTS = dict(eq_on=True, preset="Plano", gains=[0] * 10, surround=False, room=40, hrir_file="",
+DEFAULTS = dict(hints=[], eq_on=True, preset="Plano", gains=[0] * 10, surround=False, room=40, hrir_file="",
                 nr=False, nr_level=1, voice="Natural", mic_gain=0, sidetone=False, default_out=True,
                 default_in=True, sink="", source="", label="Headset")
 
@@ -112,21 +112,37 @@ def pw_nodes():
     return out
 
 
-def _is_headset(n, hints=("mchose", "c-media", "v9 pro", "x9")):
+MCHOSE_HINTS = ["mchose", "c-media", "v9 pro", "x9"]
+
+
+def hints_for(name):
+    """Palavras para achar o som de um fone pelo nome dele (ex.: "G935 Gaming Headset" -> ["g935"])."""
+    import re as _re
+    words = [w for w in _re.findall(r"[a-z0-9]+", (name or "").lower())
+             if any(c.isdigit() for c in w) and len(w) >= 3]
+    if "mchose" in (name or "").lower():
+        return list(MCHOSE_HINTS)
+    return words or [(name or "").lower().strip()]
+
+
+def _is_headset(n, hints=None):
+    hints = hints or MCHOSE_HINTS
+    mchose = hints == MCHOSE_HINTS
     if n["name"].startswith("logimouse_") or n["props"].get("node.virtual") in (True, "true"):
         return False  # os filtros do proprio LogiMouse ("MCHOSE V9 PRO · Equalizador") nao sao o fone
     if n["api"] and n["api"] not in ("alsa", "bluez5"):
         return False
     text = f"{n['name']} {n['desc']} {n['props'].get('alsa.card_name', '')} {n['props'].get('device.product.name', '')}".lower()
     vid = n["vendor"].lower().replace("0x", "")
-    return vid in ("291d", "3837") or any(h in text for h in hints)
+    return (mchose and vid in ("291d", "3837")) or any(h and h in text for h in hints)
 
 
-def find_headset(nodes=None):
-    """(sink, source) do headset: dicts do pw-dump ou None."""
+def find_headset(nodes=None, hints=None):
+    """(sink, source) do fone escolhido (por padrao o dos ajustes; sem ajuste, o MCHOSE)."""
     nodes = pw_nodes() if nodes is None else nodes
-    sink = next((n for n in nodes if n["cls"] == "Audio/Sink" and _is_headset(n)), None)
-    src = next((n for n in nodes if n["cls"] == "Audio/Source" and _is_headset(n)), None)
+    hints = hints or settings().get("hints") or MCHOSE_HINTS
+    sink = next((n for n in nodes if n["cls"] == "Audio/Sink" and _is_headset(n, hints)), None)
+    src = next((n for n in nodes if n["cls"] == "Audio/Source" and _is_headset(n, hints)), None)
     return sink, src
 
 
@@ -506,6 +522,9 @@ def fix_hw_volume(nodes=None, run=None):
     if config.DRY_RUN or not shutil.which("amixer"):
         return []
     run = run or _run
+    sink, _ = find_headset(nodes)
+    if not sink or not _is_headset(sink, MCHOSE_HINTS):
+        return []  # o volume interno esquecido e do receptor do MCHOSE; outros fones nao sao tocados
     card = headset_card(nodes)
     if card is None:
         return []

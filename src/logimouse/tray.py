@@ -491,16 +491,57 @@ class AudioFollower:
                 log("som:\n" + traceback.format_exc())
 
 
+class SyncWatcher:
+    """Traz ajustes gravados por outro computador na pasta sincronizada."""
+
+    EVERY = 30.0
+
+    def __init__(self, monitor, on_pull=None, pull=None):
+        from . import sync
+        self.monitor = monitor
+        self.pull = pull or sync.pull
+        self.on_pull = on_pull or (lambda changed: None)
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        while not self._stop.wait(self.EVERY):
+            try:
+                self.step()
+            except Exception:  # noqa: BLE001 - nunca derruba a bandeja
+                log("sincronizar:\n" + traceback.format_exc())
+
+    def step(self):
+        changed = self.pull()
+        if not changed:
+            return []
+        log("ajustes de outro computador: " + ", ".join(changed))
+        if {"devices", "lights_off", "lights_sync"} & set(changed):
+            self.monitor.reapply_now()
+        if "audio" in changed:
+            from . import audio as AU
+            if os.path.exists(AU.conf_path()):
+                AU.apply(wait=False)
+        self.on_pull(changed)
+        return changed
+
+
 class ProfileSwitcher:
     """Grava no mouse o perfil do programa aberto (regras feitas no painel)."""
 
     EVERY = 3.0
 
-    def __init__(self, monitor, on_switch=None, programs=P.running_programs):
+    def __init__(self, monitor, on_switch=None, programs=P.running_programs, audio=None):
         self.monitor = monitor
         self.on_switch = on_switch or (lambda dev, name: None)
         self.programs = programs
+        self.audio = audio  # modulo audio (equalizador do PipeWire); None nos testes
         self._stop = threading.Event()
+        self.extras_key = None   # regra que esta valendo para fone/luzes
+        self.eq_backup = None    # equalizadores de antes do jogo, para voltar depois
+        self.lights_forced = False
 
     def stop(self):
         self._stop.set()
@@ -512,8 +553,19 @@ class ProfileSwitcher:
             except Exception:  # noqa: BLE001 - nunca derruba a bandeja
                 log("troca de perfil:\n" + traceback.format_exc())
 
+    def _online(self):
+        return [d for d in list(self.monitor.devices) if (self.monitor.info.get(d) or {}).get("online")]
+
     def step(self):
         progs = None
+        rules = P.all_rules()
+        if any(r.get("eq") or r.get("lights") for r in rules) or self.extras_key is not None:
+            progs = self.programs()
+            rule = P.wanted_rule([r for r in rules if r.get("eq") or r.get("lights")], progs)
+            key = rule["match"] if rule else None
+            if key != self.extras_key:
+                self.extras_key = key
+                self.apply_extras(rule)
         for dev in list(self.monitor.devices):
             info = self.monitor.info.get(dev) or {}
             if not info.get("online"):
@@ -538,6 +590,71 @@ class ProfileSwitcher:
             P.save_device_data(dev.name, data)
             log(f"{dev.name}: perfil {want}")
             self.on_switch(dev.name, want)
+
+    def apply_extras(self, rule):
+        """Equalizador do fone e luzes do jogo aberto; ao fechar, volta como estava."""
+        heads = [d for d in self._online() if getattr(d, "is_audio", False)]
+        eq = (rule or {}).get("eq")
+        if eq and eq in self._presets():
+            if self.eq_backup is None:
+                self.eq_backup = {"pw": None, "heads": {}}
+                for d in heads:
+                    try:
+                        self.eq_backup["heads"][d.name] = d.eq_gains()
+                    except (*H.DEVICE_ERRORS, ValueError):
+                        pass
+                if self.audio is not None:
+                    a = self.audio.settings()
+                    self.eq_backup["pw"] = (a["preset"], a["gains"])
+            gains = self._presets()[eq]
+            for d in heads:
+                try:
+                    d.set_eq_gains(gains)
+                except (*H.DEVICE_ERRORS, ValueError):
+                    pass
+            self._pw_eq(eq, gains)
+            log(f"jogo: equalizador {eq}")
+        elif self.eq_backup is not None:
+            for d in heads:
+                g = self.eq_backup["heads"].get(d.name)
+                if g:
+                    try:
+                        d.set_eq_gains(g)
+                    except (*H.DEVICE_ERRORS, ValueError):
+                        pass
+            if self.eq_backup["pw"]:
+                self._pw_eq(*self.eq_backup["pw"])
+            self.eq_backup = None
+            log("jogo fechado: equalizador de volta")
+        lights = (rule or {}).get("lights")
+        if lights in ("off", "sync"):
+            sync = config.get_option("lights_sync")
+            for d in self._online():
+                try:
+                    if lights == "off":
+                        d.leds_off()
+                    elif isinstance(sync, dict):
+                        d.set_all_leds(int(sync["effect"]), sync.get("color", (0, 0, 0)), sync.get("period", 4000))
+                except (*H.DEVICE_ERRORS, ValueError, KeyError):
+                    pass
+            self.lights_forced = True
+        elif self.lights_forced:
+            for d in self._online():
+                leds = config.settings_to_apply(d.name).get("leds")
+                if leds:
+                    H.apply_settings(d, {"leds": leds})
+            self.lights_forced = False
+
+    @staticmethod
+    def _presets():
+        from . import audio as AU
+        return AU.PRESETS
+
+    def _pw_eq(self, preset, gains):
+        if self.audio is None or not os.path.exists(self.audio.conf_path()):
+            return
+        self.audio.save_settings(preset=preset, gains=list(gains))
+        self.audio.apply(wait=False)
 
 
 def _notify(title, body):
@@ -608,9 +725,14 @@ class TrayApp:
                 f"O volume interno do fone estava em {min(c['pct'] for c in done)}%. Subiu para 100% "
                 "e o volume do sistema foi para 40% para não estourar."))
             threading.Thread(target=self.audio.run, daemon=True).start()
-        self.rules = ProfileSwitcher(self.monitor, on_switch=lambda dev, name: GLib.idle_add(
+        from . import audio as AU
+        self.rules = ProfileSwitcher(self.monitor, audio=None if demo else AU, on_switch=lambda dev, name: GLib.idle_add(
             _notify, "Perfil do mouse", f"{dev}: perfil “{name}”"))
         threading.Thread(target=self.rules.run, daemon=True).start()
+        if not demo:
+            self.syncer = SyncWatcher(self.monitor, on_pull=lambda ch: GLib.idle_add(
+                _notify, "Ajustes sincronizados", "Mudanças feitas em outro computador já valem aqui."))
+            threading.Thread(target=self.syncer.run, daemon=True).start()
         for s in (signal.SIGINT, signal.SIGTERM):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, s, self.quit)
         # SIGHUP: o painel instalou uma versao nova, reabre com ela
@@ -736,8 +858,8 @@ class TrayApp:
     FIRST_CHECK = 120  # s depois de abrir (a internet pode ainda nao estar pronta no login)
 
     def _update_loop(self):
-        last = float(config.get_option("last_update_check") or 0)
-        wait = max(self.FIRST_CHECK, last + U.CHECK_EVERY - time.time())
+        # sempre confere logo depois de ligar o PC (e depois de hora em hora)
+        wait = self.FIRST_CHECK
         while not self._upd_stop.wait(wait):
             if config.get_option("auto_update"):
                 self._check_update(manual=False)
@@ -802,6 +924,8 @@ class TrayApp:
 
     def quit(self, *_):
         self.rules.stop()
+        if getattr(self, "syncer", None):
+            self.syncer.stop()
         if getattr(self, "audio", None):
             self.audio.stop()
         if getattr(self, "macros", None):

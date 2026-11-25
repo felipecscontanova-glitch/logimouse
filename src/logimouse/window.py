@@ -21,6 +21,7 @@ from . import hidpp as H  # noqa: E402
 from . import macros as M  # noqa: E402
 from . import onboard as O  # noqa: E402
 from . import profiles as P  # noqa: E402
+from . import sync as SY  # noqa: E402
 from . import update as U  # noqa: E402
 
 APP_ID = "io.github.felipecscontanova.LogiMouse"
@@ -607,8 +608,13 @@ class MainWindow(Adw.ApplicationWindow):
         keys.connect("key-released", self._key_released)
         self.add_controller(keys)
 
+        self._dev_key = None
         GLib.timeout_add(150, lambda: self.scan() and False)
         GLib.timeout_add_seconds(60, self._auto_battery)
+        # detecta sozinho: conectou/pareou/tirou algo -> procura de novo; e a cada 40 s procura em
+        # silencio (um mouse ou fone que acordou atras do mesmo receptor nao muda a USB)
+        GLib.timeout_add_seconds(3, self._watch)
+        GLib.timeout_add_seconds(40, lambda: (self.scan(quiet=True), self._sync_pull(), True)[2])
 
     # ---- mensagens ----
     def say(self, text):
@@ -641,6 +647,16 @@ class MainWindow(Adw.ApplicationWindow):
         r, _ = switch_row("Desligar todas as luzes", config.get_option("lights_off"), self._lights_off,
                           "Mouses e fones, e continuam apagadas quando eles religam")
         box.append(r)
+        box.append(lab("Sincronizar entre computadores", "lm-h2"))
+        box.append(lab("Escolha uma pasta que você já sincroniza (Google Drive, Dropbox, Nextcloud...). Perfis, "
+                       "macros, equalizador e luzes ficam iguais em todos os PCs com o LogiMouse.",
+                       "lm-small", wrap=True))
+        self.sync_lbl = lab(self._sync_text(), "lm-small", wrap=True)
+        box.append(self.sync_lbl)
+        srow = hbox(8)
+        srow.append(button("Escolher pasta…", "lm-ghost", cb=self._pick_sync_dir))
+        srow.append(button("Parar", "lm-ghost", cb=lambda: self._set_sync_dir("")))
+        box.append(srow)
         box.append(button("Procurar atualização agora", "lm-ghost", cb=self._check_update))
         box.append(lab(f"{APP_NAME} {__version__}", "lm-small"))
         pop.set_child(box)
@@ -672,6 +688,35 @@ class MainWindow(Adw.ApplicationWindow):
             if self.cur is not None and self.section == "lights":
                 self.refresh_section()
         self.worker.submit(job, ok)
+
+    def _sync_text(self):
+        d = config.get_option("sync_dir")
+        return (f"Pasta: {d}\n{SY.status()}" if d else "Desligado.")
+
+    def _pick_sync_dir(self):
+        dlg = Gtk.FileDialog(title="Pasta sincronizada para os ajustes do LogiMouse")
+
+        def done(dd, res):
+            try:
+                gf = dd.select_folder_finish(res)
+            except GLib.Error:
+                return
+            if gf and gf.get_path():
+                self._set_sync_dir(gf.get_path())
+        dlg.select_folder(self, None, done)
+
+    def _set_sync_dir(self, folder):
+        if self.demo:
+            self.say("No modo demonstração nada é alterado.")
+            return
+        changed = SY.connect(folder)
+        self.sync_lbl.set_text(self._sync_text())
+        if folder:
+            self.toast_msg("Ajustes trazidos de outro computador." if changed else "Sincronização ligada.")
+            if changed:
+                self.scan()
+        else:
+            self.say("Sincronização desligada.")
 
     def _autostart(self, on):
         if self.demo:
@@ -738,11 +783,38 @@ class MainWindow(Adw.ApplicationWindow):
         d.present()
 
     # ---- procurar dispositivos ----
-    def scan(self):
+    def _sync_pull(self):
+        if self.demo or not config.get_option("sync_dir"):
+            return
+
+        def ok(changed):
+            if changed:
+                self.toast_msg("Ajustes atualizados por outro computador.")
+                if self.stack.get_visible_child_name() == "home":
+                    self.build_home()
+                elif not self.dirty:
+                    self.refresh_section()
+        self.audio_worker.submit(SY.pull, ok)
+
+    def _watch(self):
+        if self.demo:
+            return True
+        demo = self.demo
+
+        def ok(key):
+            if self._dev_key is not None and key != self._dev_key:
+                self.scan(quiet=True)
+            self._dev_key = key
+        self.audio_worker.submit(lambda: device_key(demo), ok)
+        return True
+
+    def scan(self, quiet=False):
         if self._busy:
             return False
         self._busy = True
-        self.say("Procurando mouse e headset...")
+        self._quiet = quiet
+        if not quiet:
+            self.say("Procurando dispositivos...")
         if self.demo:
             from . import demo as D
             mice_fn = D.discover_demo
@@ -763,14 +835,47 @@ class MainWindow(Adw.ApplicationWindow):
             states = {}
             for m in mice:
                 states[id(m)] = load_mouse(m)
+                if m.ui == "logi_headset":
+                    load_audio(states[id(m)], m, demo)
             for h in heads:
-                states[id(h)] = load_headset(h, demo) if h.ui == "mchose" else load_generic(h)
+                if h.ui == "mchose":
+                    states[id(h)] = load_headset(h, demo)
+                else:
+                    states[id(h)] = load_generic(h)
+                    if getattr(h, "audio", False):
+                        load_audio(states[id(h)], h, demo)
             return mice, heads, states, problems + hp
         self.worker.submit(job, self._scanned, self._scan_failed)
         return False
 
     def _scanned(self, res):
         self._busy = False
+        if getattr(self, "_quiet", False):
+            new_names = sorted(d.name for d in res[0] + res[1])
+            old_names = sorted(d.name for d in self.mice + self.heads)
+            if new_names == old_names:
+                # nada entrou nem saiu: so atualiza os dados mostrados, sem redesenhar a tela
+                for d in res[0] + res[1]:
+                    close_device(d, keep=self.mice + self.heads)
+                by_name = {d.name: d for d in self.mice + self.heads}
+                for d in res[0] + res[1]:
+                    keep = by_name.get(d.name)
+                    if keep is not None and res[2].get(id(d), {}).get("battery"):
+                        self.states.setdefault(id(keep), {})["battery"] = res[2][id(d)]["battery"]
+                if self.stack.get_visible_child_name() == "home":
+                    self.build_home()
+                return
+            added = [n for n in new_names if n not in old_names]
+            gone = [n for n in old_names if n not in new_names]
+            if added:
+                self.toast_msg("Conectado: " + ", ".join(added))
+            elif gone:
+                self.toast_msg("Desconectado: " + ", ".join(gone))
+            if self.dirty and self.cur is not None and self.cur.name in new_names:
+                # alteracoes nao gravadas no mouse aberto: nao troca a tela agora
+                for d in res[0] + res[1]:
+                    close_device(d, keep=self.mice + self.heads)
+                return
         old = self.mice + self.heads
         cur_name = self.cur.name if self.cur else None
         self.mice, self.heads, self.states, self.problems = res
@@ -897,6 +1002,10 @@ class MainWindow(Adw.ApplicationWindow):
             st.append(lab(v, "lm-stat-v"))
             stats.append(st)
         inner.append(stats)
+        caps = [c for c, _, _ in capabilities(d, s) if c != "Bateria"]
+        if caps:
+            more = f"  +{len(caps) - 5}" if len(caps) > 5 else ""
+            inner.append(lab("Recursos: " + " · ".join(caps[:5]) + more, "lm-small", wrap=True))
         inner.append(lab("Abrir ajustes →", "lm-tag", *(["purple"] if is_h else [])))
         b.set_child(inner)
         b.connect("clicked", lambda *_: self.open_device(d))
@@ -940,7 +1049,11 @@ class MainWindow(Adw.ApplicationWindow):
             P.ensure_default(d.name, json_copy(ob["profile"]))
             self.sel_level = self.work["default_dpi"]
         if d.ui == "logi_headset":
-            secs = [("lsound", "Som"), ("lights", "Luzes"), ("info", "Geral")]
+            secs = [("lsound", "Som"), ("mic", "Microfone"), ("lights", "Luzes"), ("info", "Geral")]
+            if not s.get("leds"):
+                secs.remove(("lights", "Luzes"))
+        elif d.ui == "generic" and getattr(d, "audio", False):
+            secs = [("sound", "Som"), ("mic", "Microfone"), ("info", "Geral")]
         elif d.ui == "generic":
             secs = [("info", "Geral")]
         elif is_h:
@@ -952,6 +1065,7 @@ class MainWindow(Adw.ApplicationWindow):
             secs = [("perf", "Desempenho"), ("test", "Teste")]
         if d.ui == "mouse" and s.get("leds"):
             secs.insert(len(secs) - 1, ("lights", "Luzes"))
+        secs.append(("caps", "Recursos"))
         if not keep_section or self.section not in dict(secs):
             self.section = secs[0][0]
         self.secs = secs
@@ -1697,8 +1811,9 @@ class MainWindow(Adw.ApplicationWindow):
         body.append(acts)
 
         c = card("Trocar sozinho por programa",
-                 "Quando um destes programas estiver aberto, o LogiMouse grava o perfil dele no mouse. "
-                 "Ao fechar, volta para “Padrão”. (Funciona com a bandeja ligada.)")
+                 "Quando um destes programas estiver aberto, o LogiMouse grava o perfil dele no mouse e, se você "
+                 "escolher, troca o equalizador dos fones e as luzes. Ao fechar, volta tudo como estava. "
+                 "(Funciona com o ícone na barra ligado.)")
         names = list(data["profiles"].keys())
         for k, r in enumerate(data["rules"]):
             row = hbox(12, "lm-stat")
@@ -1711,6 +1826,16 @@ class MainWindow(Adw.ApplicationWindow):
                 dd.set_selected(names.index(r["profile"]))
             dd.connect("notify::selected", lambda w, _p, k=k: self._rule_profile(k, names[w.get_selected()]))
             row.append(dd)
+            eqs = [""] + list(AU.PRESETS)
+            de = Gtk.DropDown.new_from_strings(["EQ do fone: não mudar"] + [f"EQ do fone: {n}" for n in AU.PRESETS])
+            de.set_selected(eqs.index(r.get("eq")) if r.get("eq") in eqs else 0)
+            de.connect("notify::selected", lambda w, _p, k=k: self._rule_set(k, eq=eqs[w.get_selected()]))
+            row.append(de)
+            lts = ["", "off", "sync"]
+            dl = Gtk.DropDown.new_from_strings(["Luzes: não mudar", "Luzes: apagar", "Luzes: sincronizadas"])
+            dl.set_selected(lts.index(r.get("lights")) if r.get("lights") in lts else 0)
+            dl.connect("notify::selected", lambda w, _p, k=k: self._rule_set(k, lights=lts[w.get_selected()]))
+            row.append(dl)
             rm = button("", "lm-ghost", cb=lambda k=k: self._rule_remove(k))
             rm.set_icon_name("user-trash-symbolic")
             rm.set_tooltip_text("Remover regra")
@@ -1797,6 +1922,12 @@ class MainWindow(Adw.ApplicationWindow):
             rules.pop(k)
         P.set_rules(self.cur.name, rules)
         self.refresh_section()
+
+    def _rule_set(self, k, **kw):
+        data = P.device_data(self.cur.name)
+        if k < len(data["rules"]):
+            data["rules"][k].update(kw)
+            P.set_rules(self.cur.name, data["rules"])
 
     def _rule_profile(self, k, prof):
         data = P.device_data(self.cur.name)
@@ -1953,8 +2084,9 @@ class MainWindow(Adw.ApplicationWindow):
             body.append(c)
         if not (info or s.get("sidetone") is not None):
             body.append(card("Este fone não tem ajustes de som conhecidos", "Só a bateria é lida.", "dashed"))
-        body.append(lab("Redução de ruído por IA e surround 7.1 do LogiMouse ainda são só para o MCHOSE; no G935 o "
-                        "equalizador acima é o do próprio fone.", "lm-small", wrap=True))
+        self._sound_extras(body)
+        body.append(lab("O equalizador acima é o do próprio fone. Surround e microfone sem ruído (aba Microfone) "
+                        "são feitos pelo LogiMouse no computador.", "lm-small", wrap=True))
 
     def _leq_drag(self, g):
         self.leq = list(g)
@@ -1987,9 +2119,18 @@ class MainWindow(Adw.ApplicationWindow):
             body.append(card("Todas as luzes estão desligadas",
                              "A opção “Desligar todas as luzes” (engrenagem) está ligada: as luzes apagam de novo "
                              "quando o dispositivo religa. Desligue a opção para escolher um efeito.", "dashed"))
+        sync = config.get_option("lights_sync")
+        r, _ = switch_row("Sincronizar luzes de todos os dispositivos", isinstance(sync, dict), self._lights_sync,
+                          "O efeito aplicado aqui vale para todas as zonas de todos os mouses e fones, e "
+                          "continua assim quando eles religam.")
+        sc = card()
+        sc.append(r)
+        body.append(sc)
         saved = config.device_settings(d.name).get("leds") or {}
         if not isinstance(saved, dict):
             saved = {}
+        if isinstance(sync, dict):
+            saved = {str(z["zone"]): sync for z in zones}
         self.led_state = {}
         for z in zones:
             cur = saved.get(str(z["zone"])) or {}
@@ -2025,13 +2166,75 @@ class MainWindow(Adw.ApplicationWindow):
                         "dispositivo religa. Alguns mouses (como o G305) informam uma zona de luz sem ter LED visível.",
                         "lm-small", wrap=True))
 
+    def _lights_sync(self, on):
+        if not on:
+            config.set_option("lights_sync", None)
+            self.say("Luzes independentes: cada dispositivo guarda o seu efeito.")
+            return
+        zone = next(iter(self.led_state), None)
+        st = dict(self.led_state[zone]) if zone is not None else dict(effect=1, color=(0xA8, 0x55, 0xF7),
+                                                                       period=4000)
+        self._sync_all(st)
+
+    def _sync_all(self, st):
+        sync = dict(effect=int(st["effect"]), color=list(st["color"]), period=int(st["period"]))
+        config.set_option("lights_sync", sync)
+        if config.get_option("lights_off"):
+            config.set_option("lights_off", False)
+        devs = [d for d in self.mice if self.states.get(id(d), {}).get("leds")]
+
+        def job():
+            done = []
+            for d in devs:
+                try:
+                    d.set_all_leds(sync["effect"], sync["color"], sync["period"])
+                    done.append(d.name)
+                except (*H.DEVICE_ERRORS, ValueError):
+                    pass
+            return done
+        self.worker.submit(job, lambda done: self.toast_msg(
+            "Luzes sincronizadas: " + ", ".join(done) if done else "Nenhum dispositivo com luzes respondeu agora."))
+
     def _led_apply(self, zone):
         d = self.cur
         st = dict(self.led_state[zone])
+        if isinstance(config.get_option("lights_sync"), dict):
+            self._sync_all(st)
+            return
         saved = config.device_settings(d.name).get("leds") or {}
         saved = dict(saved) if isinstance(saved, dict) else {}
         saved[str(zone)] = dict(effect=st["effect"], color=list(st["color"]), period=st["period"])
         self._apply(lambda: d.set_led(zone, st["effect"], st["color"], st["period"]), "Luzes", {"leds": saved})
+
+    def _sec_caps(self, body):
+        d, s = self.cur, self.st
+        caps = capabilities(d, s)
+        hw = [c for c in caps if c[1] == "aparelho"]
+        sw = [c for c in caps if c[1] == "LogiMouse"]
+        no = [c for c in caps if c[1] == "ainda não"]
+        for title, sub, items in (
+                ("No próprio aparelho", "Recursos que o aparelho tem e o LogiMouse controla. O que é gravado nele "
+                 "vale em qualquer computador.", hw),
+                ("Feitos pelo LogiMouse", "Recursos extras que o LogiMouse faz no computador para este aparelho.", sw),
+                ("O aparelho tem, mas o LogiMouse ainda não controla", None, no)):
+            if not items:
+                continue
+            c = card(title, sub)
+            for name, _, where in items:
+                row = hbox(12)
+                n = lab(name, "lm-h2")
+                n.set_hexpand(True)
+                row.append(n)
+                row.append(lab(where, "lm-small", xalign=1))
+                c.append(row)
+            body.append(c)
+        if d.protocol:
+            feats = s.get("features") or []
+            body.append(lab(f"Detectado automaticamente pelo protocolo HID++ {d.protocol[0]}.{d.protocol[1]}: "
+                            f"{len(feats)} funções anunciadas pelo aparelho.", "lm-small", wrap=True))
+        elif d.ui == "generic":
+            body.append(lab("Detectado automaticamente pelo sistema (UPower): só informa a bateria.", "lm-small",
+                            wrap=True))
 
     def _sec_info(self, body):
         d, s = self.cur, self.st
@@ -2068,6 +2271,11 @@ class MainWindow(Adw.ApplicationWindow):
     # HEADSET
     # ======================================================================
     def audio_change(self, rebuild=False, **kw):
+        if self.cur is not None:
+            hints = AU.hints_for(self.cur.name) if self.cur.ui != "mchose" else AU.MCHOSE_HINTS
+            if AU.settings().get("hints") != hints:
+                # outro fone: o som passa a ir para ele (nomes do PipeWire procurados de novo)
+                kw.update(hints=hints, sink="", source="", label=self.cur.name)
         AU.save_settings(**kw)
         if self._audio_timer:
             GLib.source_remove(self._audio_timer)
@@ -2116,6 +2324,12 @@ class MainWindow(Adw.ApplicationWindow):
             lbls.append(b)
         c.append(lbls)
         body.append(c)
+        self._sound_extras(body)
+
+    def _sound_extras(self, body):
+        """Surround 7.1 (PipeWire) e volume: valem para qualquer fone."""
+        a = AU.settings()
+        s = self.st
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18, homogeneous=True)
         c = card()
         r, _ = switch_row("Surround virtual 7.1", a["surround"], lambda v: self.audio_change(surround=v),
@@ -2393,18 +2607,26 @@ def load_mouse(dev):
 
 
 def load_headset(h, demo=False):
-    s = dict(battery=None, error=None, sink=None, source=None, vol=None, micvol=None)
+    s = dict(battery=None, error=None)
     try:
         s["battery"] = h.read_battery()
     except HS.HeadsetError as e:
         s["error"] = str(e)
+    return load_audio(s, h, demo)
+
+
+def load_audio(s, h, demo=False):
+    """Som do fone no computador (PipeWire): saida, microfone, volumes, plugins."""
+    s.update(sink=None, source=None, vol=None, micvol=None)
+    hints = AU.MCHOSE_HINTS if h.ui == "mchose" else AU.hints_for(h.name)
     s["pw"] = AU.pipewire_ok()
     s["rnnoise"] = AU.rnnoise_plugin() if not demo else "demo"
     s["running"] = AU.service_running() if not demo else False
     if demo:  # volumes simulados para o --demo
         s.update(sink={"id": 0, "name": "demo"}, source={"id": 0, "name": "demo"}, vol=62, micvol=80)
     elif s["pw"]:
-        sink, src = AU.find_headset()
+        nodes = AU.pw_nodes()
+        sink, src = AU.find_headset(nodes, hints)
         s["sink"], s["source"] = sink, src
         if sink:
             s["vol"] = AU.get_volume(sink["id"])
@@ -2412,9 +2634,95 @@ def load_headset(h, demo=False):
                 AU.save_settings(label=h.name)
         if src:
             s["micvol"] = AU.get_volume(src["id"])
-        card = AU.headset_card()
-        s["hw"] = AU.hw_volumes(card) if card else []
+        if h.ui == "mchose" and sink:
+            card = sink["props"].get("alsa.card")
+            s["hw"] = AU.hw_volumes(card) if card is not None else []
     return s
+
+
+# feature HID++ -> (nome, onde fica no painel)
+FEATURE_CAPS = [
+    ((0x1000, 0x1001, 0x1004, 0x1F20), "Bateria", "cartão e barra"),
+    ((0x2201, 0x2202), "DPI", "Desempenho"),
+    ((0x2205,), "Velocidade do ponteiro", "Desempenho"),
+    ((0x8060, 0x8061), "Taxa de atualização", "Desempenho"),
+    ((0x8100,), "Memória de perfis (botões e DPI no mouse)", "Botões e Perfis"),
+    ((0x2110, 0x2111), "SmartShift (roda)", "Desempenho"),
+    ((0x2121,), "Roda em alta resolução", "Desempenho"),
+    ((0x8070, 0x8071), "Luzes", "Luzes"),
+    ((0x8310,), "Equalizador gravado no fone", "Som"),
+    ((0x8300,), "Retorno da voz", "Som"),
+]
+FEATURE_TODO = [((0x8010,), "Teclas G"), ((0x1B04,), "Botões programáveis (tipo MX)"), ((0x4521,), "Teclas Fn")]
+
+
+def capabilities(d, s):
+    """[(nome, "aparelho"|"LogiMouse"|"ainda não", onde)] do que o dispositivo oferece."""
+    out = []
+    feats = set(s.get("features") or [])
+    if d.ui == "mchose":
+        out.append(("Bateria", "aparelho", "cartão e barra"))
+    elif d.ui == "generic":
+        out.append(("Bateria", "aparelho", "cartão e barra"))
+    for ids, name, where in FEATURE_CAPS:
+        if feats & set(ids):
+            out.append((name, "aparelho", where))
+    if not feats and d.protocol and s.get("battery"):
+        out.append(("Bateria", "aparelho", "cartão e barra"))
+    audio = d.ui in ("mchose", "logi_headset") or getattr(d, "audio", False)
+    if d.ui == "mouse":
+        if s.get("onboard"):
+            out += [("Macros", "LogiMouse", "Macros"), ("Perfis por programa", "LogiMouse", "Perfis")]
+        out.append(("Teste de botões e rolagem", "LogiMouse", "Teste"))
+    if audio:
+        out += [("Redução de ruído por IA (RNNoise)", "LogiMouse", "Microfone"),
+                ("Ganho e equalizador da voz", "LogiMouse", "Microfone"),
+                ("Teste de microfone", "LogiMouse", "Microfone"),
+                ("Surround virtual 7.1", "LogiMouse", "Som")]
+        if d.ui != "logi_headset":
+            out.append(("Equalizador de 10 faixas", "LogiMouse", "Som"))
+    if d.ui == "mchose":
+        out.append(("Correção do volume interno baixo", "LogiMouse", "Som"))
+    if d.ui != "generic":
+        out.append(("Aviso de bateria baixa", "LogiMouse", "Geral"))
+    for ids, name in FEATURE_TODO:
+        if feats & set(ids):
+            out.append((name, "ainda não", ""))
+    seen, uniq = set(), []
+    for c in out:
+        if c[0] not in seen:
+            seen.add(c[0])
+            uniq.append(c)
+    return uniq
+
+
+def device_key(demo=False):
+    """O que esta plugado/pareado agora (barato: /sys e a lista do UPower)."""
+    if demo:
+        return None
+    try:
+        hid = tuple(sorted(n["path"] for n in H.hidpp_nodes())) + tuple(sorted(n["path"] for n in HS.mchose_nodes()))
+    except OSError:
+        hid = ()
+    up = ()
+    r = AU._run(["upower", "-e"], timeout=3) if AU.shutil.which("upower") else None
+    if r and r.returncode == 0:
+        up = tuple(sorted(r.stdout.split()))
+    return hid + up
+
+
+def close_device(d, keep=()):
+    """Fecha o que uma procura abriu e nao vai ser usado (sem fechar transportes em uso)."""
+    t = getattr(d, "t", None)
+    if t is not None and any(getattr(k, "t", None) is t for k in keep):
+        return
+    try:
+        if getattr(d, "is_headset", False):
+            d.close()
+        elif t is not None:
+            t.close()
+    except OSError:
+        pass
 
 
 def load_generic(d):

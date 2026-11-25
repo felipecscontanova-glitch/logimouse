@@ -23,6 +23,15 @@ programas da Logitech e sem nada rodando como root.
 
 <sub>Capturas feitas com o mouse e o headset simulados (`--demo`).</sub>
 
+## Novidades da 2.3
+
+- O painel **percebe sozinho** quando você conecta, pareia ou desliga um aparelho.
+- Página **Recursos**: o que cada aparelho tem e o que o LogiMouse faz por ele.
+- Redução de ruído por IA e surround 7.1 em **qualquer fone** (G935, Bluetooth...).
+- **Luzes sincronizadas** em todos os aparelhos e **regras por jogo** que trocam perfil do mouse,
+  equalizador do fone e luzes juntos.
+- **Ajustes iguais em vários PCs** por uma pasta do Google Drive/Dropbox/Nextcloud (engrenagem).
+
 ## Fones Logitech e qualquer dispositivo (2.1)
 
 - **Fones Logitech** como o G935 aparecem sozinhos: bateria, retorno da voz, equalizador gravado

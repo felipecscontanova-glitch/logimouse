@@ -35,7 +35,7 @@ DRY_RUN = False
 _memory = None
 
 DEFAULTS = {"reapply": True, "notify_low": True, "auto_update": True, "last_update_check": 0, "devices": {},
-            "lights_off": False}
+            "lights_off": False, "lights_sync": None, "sync_dir": "", "sync_seen": 0}
 
 
 def load():
@@ -57,11 +57,18 @@ def load():
     return cfg
 
 
-def save(cfg):
+def save(cfg, export=True):
     global _memory
     if DRY_RUN:
         _memory = json.loads(json.dumps(cfg))
         return
+    if export and cfg.get("sync_dir"):
+        # copia para a pasta sincronizada ANTES de gravar: o horario da copia vai junto (sync_seen)
+        try:
+            from . import sync
+            sync.export(cfg)
+        except OSError:
+            pass  # pasta fora do ar: tenta de novo na proxima mudanca
     os.makedirs(config_dir(), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=config_dir(), prefix=".config-", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -130,6 +137,8 @@ def settings_to_apply(device_name):
     s = device_settings(device_name)
     if get_option("lights_off"):
         s["leds"] = "off"
+    elif isinstance(get_option("lights_sync"), dict):
+        s["leds"] = {"*": get_option("lights_sync")}  # o mesmo efeito em todos
     return s
 
 

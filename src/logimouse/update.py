@@ -38,7 +38,7 @@ INSTALLED_RULE = "/etc/udev/rules.d/42-logimouse.rules"
 # regras de permissao que o instalar.sh copia para /etc/udev/rules.d
 RULES = ("42-logimouse.rules", "71-logimouse-macros.rules")
 RULES_DIR = "/etc/udev/rules.d"
-CHECK_EVERY = 24 * 3600
+CHECK_EVERY = 3600  # 1 hora (2 consultas ao GitHub por vez: bem abaixo do limite de 60/hora)
 
 
 class UpdateError(Exception):

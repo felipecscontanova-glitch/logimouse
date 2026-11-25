@@ -168,8 +168,12 @@ class HidrawPort:
             return None
 
     def close(self):
+        # fechar duas vezes poderia fechar outro arquivo que reaproveitou o mesmo numero
+        fd, self.fd = self.fd, -1
+        if fd < 0:
+            return
         try:
-            os.close(self.fd)
+            os.close(fd)
         except OSError:
             pass
 

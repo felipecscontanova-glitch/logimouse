@@ -101,8 +101,12 @@ class HidrawTransport:
             return None
 
     def close(self):
+        # fechar duas vezes poderia fechar outro arquivo que reaproveitou o mesmo numero
+        fd, self.fd = self.fd, -1
+        if fd < 0:
+            return
         try:
-            os.close(self.fd)
+            os.close(fd)
         except OSError:
             pass
 
@@ -382,6 +386,19 @@ class Device:
         self.call(F_HIRES_WHEEL, 2, mode & 0xFF)
         return self.hires_wheel()
 
+    # ---- o que o dispositivo sabe fazer ----
+    def feature_list(self):
+        """Todas as features HID++ que o dispositivo anuncia (feature 0x0001)."""
+        idx = self.feature(0x0001)
+        if idx is None:
+            raise NotSupported("lista de features indisponível")
+        n = self.request(idx, 0)[0]
+        out = []
+        for i in range(1, n + 1):
+            r = self.request(idx, 1, i)
+            out.append((r[0] << 8) | r[1])
+        return out
+
     # ---- fones ----
     @property
     def is_audio(self):
@@ -447,6 +464,17 @@ class Device:
                     effects.append((e, eid, self.LED_EFFECTS[eid]))
             out.append(dict(zone=z, name=self.LED_ZONES.get(loc, f"Zona {z + 1}"), effects=effects))
         return out
+
+    def set_all_leds(self, effect_id, color=(0xA8, 0x55, 0xF7), period=4000):
+        """O mesmo efeito em todas as zonas que o suportam (luzes sincronizadas)."""
+        n = 0
+        for z in self.led_zones():
+            if any(eid == effect_id for _, eid, _ in z["effects"]):
+                self.set_led(z["zone"], effect_id, color, period)
+                n += 1
+        if not n:
+            raise NotSupported("nenhuma zona com esse efeito")
+        return n
 
     def leds_off(self):
         """Apaga todas as zonas que tem o efeito "desligada". Devolve quantas apagou."""
@@ -715,6 +743,7 @@ def read_all(dev):
             s.setdefault("errors", []).append(str(e))
 
     s["battery"] = read_battery(dev)
+    safe("features", dev.feature_list)
     if dev.is_audio:
         safe("sidetone", dev.sidetone)
         safe("eq_info", dev.eq_info)
@@ -747,7 +776,9 @@ def apply_settings(dev, saved):
         ("hires", "alta resolução", lambda v: dev.set_hires_wheel(hires=bool(v))),
         ("invert", "inverter rolagem", lambda v: dev.set_hires_wheel(invert=bool(v))),
         ("sidetone", "retorno da voz", lambda v: dev.set_sidetone(int(v))),
-        ("leds", "luzes", lambda v: dev.leds_off() if v == "off" else [
+        ("leds", "luzes", lambda v: dev.leds_off() if v == "off" else
+            dev.set_all_leds(int(v["*"]["effect"]), v["*"].get("color", (0, 0, 0)), v["*"].get("period", 4000))
+            if "*" in v else [
             dev.set_led(int(z), int(x["effect"]), x.get("color", (0, 0, 0)), x.get("period", 4000))
             for z, x in v.items()]),
     ]

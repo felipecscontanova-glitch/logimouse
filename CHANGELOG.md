@@ -1,5 +1,23 @@
 # Histórico de versões
 
+## 2.3.0 (2026-11-25)
+
+- **Detecção ao vivo**: o painel percebe sozinho quando um aparelho é conectado, pareado, desligado
+  ou acorda atrás do receptor, e atualiza a tela (com aviso "Conectado: ...").
+- **Recursos de cada aparelho**: nova página "Recursos" e um resumo em cada cartão, com o que o
+  aparelho tem (lido do próprio aparelho, HID++ 0x0001), o que o LogiMouse faz por ele no
+  computador e o que ele tem mas o LogiMouse ainda não controla (ex.: teclas G do G935).
+- **Extras de som em qualquer fone**: redução de ruído por IA, EQ e ganho da voz, teste de
+  microfone e surround 7.1 agora valem para fones Logitech (G935) e fones Bluetooth, não só MCHOSE.
+- **Luzes sincronizadas**: o mesmo efeito em todas as zonas de todos os mouses e fones, mantido
+  quando eles religam.
+- **Regras por programa** também trocam o equalizador dos fones e as luzes (apagar ou
+  sincronizadas), e voltam tudo como estava quando o programa fecha.
+- **Ajustes entre computadores** por uma pasta que você já sincroniza (Google Drive, Dropbox,
+  Nextcloud): perfis, macros, equalizador, luzes e avisos. Vale a última mudança; nomes das saídas
+  de som ficam em cada PC.
+- Atualização automática: confere ao ligar o PC e depois de hora em hora (antes, uma vez por dia).
+
 ## 2.2.1 (2026-11-25)
 
 - Fones Logitech carregando (G935): a bateria pela tensão exagerava a carga, porque o carregador

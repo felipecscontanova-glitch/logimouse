@@ -82,7 +82,8 @@ def delete_profile(device, name):
 
 def set_rules(device, rules):
     data = device_data(device)
-    data["rules"] = [{"match": r["match"].strip(), "profile": r["profile"]}
+    data["rules"] = [{"match": r["match"].strip(), "profile": r["profile"],
+                      "eq": r.get("eq") or "", "lights": r.get("lights") or ""}
                      for r in rules if r.get("match", "").strip() and r.get("profile")]
     save_device_data(device, data)
     return data
@@ -133,6 +134,21 @@ def running_programs(proc="/proc"):
             continue
     names.discard("")
     return names
+
+
+def wanted_rule(rules, programs):
+    """Primeira regra cujo programa esta aberto (ou None)."""
+    for r in rules or []:
+        m = (r.get("match") or "").lower()
+        if m and any(m in p for p in programs):
+            return r
+    return None
+
+
+def all_rules():
+    """Regras de todos os mouses (o fone e as luzes seguem a primeira que bater)."""
+    mp = config.load().get("mouse_profiles") or {}
+    return [r for d in mp.values() if isinstance(d, dict) for r in d.get("rules") or []]
 
 
 def wanted_profile(data, programs):
